@@ -1,0 +1,27 @@
+[0.429s] Invoking command in '/home/poorcsky/csky_ws/src/navigation_manager': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/poorcsky/csky_ws/build/navigation_manager/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/navigation_manager build --build-base /home/poorcsky/csky_ws/build/navigation_manager/build install --record /home/poorcsky/csky_ws/build/navigation_manager/install.log --single-version-externally-managed install_data
+[0.573s] running egg_info
+[0.583s] writing ../../build/navigation_manager/navigation_manager.egg-info/PKG-INFO
+[0.583s] writing dependency_links to ../../build/navigation_manager/navigation_manager.egg-info/dependency_links.txt
+[0.583s] writing entry points to ../../build/navigation_manager/navigation_manager.egg-info/entry_points.txt
+[0.583s] writing requirements to ../../build/navigation_manager/navigation_manager.egg-info/requires.txt
+[0.584s] writing top-level names to ../../build/navigation_manager/navigation_manager.egg-info/top_level.txt
+[0.603s] reading manifest file '../../build/navigation_manager/navigation_manager.egg-info/SOURCES.txt'
+[0.603s] writing manifest file '../../build/navigation_manager/navigation_manager.egg-info/SOURCES.txt'
+[0.603s] running build
+[0.603s] running build_py
+[0.603s] running install
+[0.607s] running install_lib
+[0.616s] running install_data
+[0.616s] running install_egg_info
+[0.626s] removing '/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager-0.0.0-py3.12.egg-info' (and everything under it)
+[0.626s] Copying ../../build/navigation_manager/navigation_manager.egg-info to /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager-0.0.0-py3.12.egg-info
+[0.627s] running install_scripts
+[0.697s] Installing a_star_planner script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing agpf_planner script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing depth_filter script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing obstacle_detector script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing path_follower script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing safety_layer script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] Installing waypoint_manager script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.698s] writing list of installed files to '/home/poorcsky/csky_ws/build/navigation_manager/install.log'
+[0.711s] Invoked command in '/home/poorcsky/csky_ws/src/navigation_manager' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/poorcsky/csky_ws/build/navigation_manager/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/navigation_manager build --build-base /home/poorcsky/csky_ws/build/navigation_manager/build install --record /home/poorcsky/csky_ws/build/navigation_manager/install.log --single-version-externally-managed install_data

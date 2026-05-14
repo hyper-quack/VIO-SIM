@@ -1,0 +1,36 @@
+[0.422s] Invoking command in '/home/poorcsky/csky_ws/src/navigation_manager': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/poorcsky/csky_ws/build/navigation_manager/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/navigation_manager build --build-base /home/poorcsky/csky_ws/build/navigation_manager/build install --record /home/poorcsky/csky_ws/build/navigation_manager/install.log --single-version-externally-managed install_data
+[0.558s] running egg_info
+[0.567s] writing ../../build/navigation_manager/navigation_manager.egg-info/PKG-INFO
+[0.567s] writing dependency_links to ../../build/navigation_manager/navigation_manager.egg-info/dependency_links.txt
+[0.567s] writing entry points to ../../build/navigation_manager/navigation_manager.egg-info/entry_points.txt
+[0.567s] writing requirements to ../../build/navigation_manager/navigation_manager.egg-info/requires.txt
+[0.567s] writing top-level names to ../../build/navigation_manager/navigation_manager.egg-info/top_level.txt
+[0.586s] reading manifest file '../../build/navigation_manager/navigation_manager.egg-info/SOURCES.txt'
+[0.587s] writing manifest file '../../build/navigation_manager/navigation_manager.egg-info/SOURCES.txt'
+[0.587s] running build
+[0.587s] running build_py
+[0.587s] copying navigation_manager/depth_filter.py -> /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager
+[0.587s] copying navigation_manager/obstacle_detector.py -> /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager
+[0.587s] copying navigation_manager/a_star_planner.py -> /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager
+[0.587s] running install
+[0.590s] running install_lib
+[0.600s] copying /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager/depth_filter.py -> /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager
+[0.600s] copying /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager/obstacle_detector.py -> /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager
+[0.600s] copying /home/poorcsky/csky_ws/build/navigation_manager/build/lib/navigation_manager/a_star_planner.py -> /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager
+[0.601s] byte-compiling /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager/depth_filter.py to depth_filter.cpython-312.pyc
+[0.602s] byte-compiling /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager/obstacle_detector.py to obstacle_detector.cpython-312.pyc
+[0.604s] byte-compiling /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager/a_star_planner.py to a_star_planner.cpython-312.pyc
+[0.606s] running install_data
+[0.606s] running install_egg_info
+[0.616s] removing '/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager-0.0.0-py3.12.egg-info' (and everything under it)
+[0.616s] Copying ../../build/navigation_manager/navigation_manager.egg-info to /home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages/navigation_manager-0.0.0-py3.12.egg-info
+[0.616s] running install_scripts
+[0.679s] Installing a_star_planner script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.679s] Installing agpf_planner script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.679s] Installing depth_filter script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.679s] Installing obstacle_detector script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.680s] Installing path_follower script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.680s] Installing safety_layer script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.680s] Installing waypoint_manager script to /home/poorcsky/csky_ws/install/navigation_manager/lib/navigation_manager
+[0.680s] writing list of installed files to '/home/poorcsky/csky_ws/build/navigation_manager/install.log'
+[0.693s] Invoked command in '/home/poorcsky/csky_ws/src/navigation_manager' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/poorcsky/csky_ws/build/navigation_manager/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/navigation_manager build --build-base /home/poorcsky/csky_ws/build/navigation_manager/build install --record /home/poorcsky/csky_ws/build/navigation_manager/install.log --single-version-externally-managed install_data

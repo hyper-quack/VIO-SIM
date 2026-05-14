@@ -1,0 +1,43 @@
+running egg_info
+creating ../../build/vio_localization/vio_localization.egg-info
+writing ../../build/vio_localization/vio_localization.egg-info/PKG-INFO
+writing dependency_links to ../../build/vio_localization/vio_localization.egg-info/dependency_links.txt
+writing entry points to ../../build/vio_localization/vio_localization.egg-info/entry_points.txt
+writing requirements to ../../build/vio_localization/vio_localization.egg-info/requires.txt
+writing top-level names to ../../build/vio_localization/vio_localization.egg-info/top_level.txt
+writing manifest file '../../build/vio_localization/vio_localization.egg-info/SOURCES.txt'
+reading manifest file '../../build/vio_localization/vio_localization.egg-info/SOURCES.txt'
+writing manifest file '../../build/vio_localization/vio_localization.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/poorcsky/csky_ws/build/vio_localization/build
+creating /home/poorcsky/csky_ws/build/vio_localization/build/lib
+creating /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization
+copying vio_localization/rgb_resizer.py -> /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization
+copying vio_localization/stereo_sync.py -> /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization
+copying vio_localization/__init__.py -> /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization
+running install
+running install_lib
+creating /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization
+copying /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization/rgb_resizer.py -> /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization
+copying /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization/stereo_sync.py -> /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization
+copying /home/poorcsky/csky_ws/build/vio_localization/build/lib/vio_localization/__init__.py -> /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization
+byte-compiling /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization/rgb_resizer.py to rgb_resizer.cpython-312.pyc
+byte-compiling /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization/stereo_sync.py to stereo_sync.cpython-312.pyc
+byte-compiling /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization/__init__.py to __init__.cpython-312.pyc
+running install_data
+creating /home/poorcsky/csky_ws/install/vio_localization/share/ament_index
+creating /home/poorcsky/csky_ws/install/vio_localization/share/ament_index/resource_index
+creating /home/poorcsky/csky_ws/install/vio_localization/share/ament_index/resource_index/packages
+copying resource/vio_localization -> /home/poorcsky/csky_ws/install/vio_localization/share/ament_index/resource_index/packages
+copying package.xml -> /home/poorcsky/csky_ws/install/vio_localization/share/vio_localization
+creating /home/poorcsky/csky_ws/install/vio_localization/share/vio_localization/launch
+copying launch/vio.launch.py -> /home/poorcsky/csky_ws/install/vio_localization/share/vio_localization/launch
+creating /home/poorcsky/csky_ws/install/vio_localization/share/vio_localization/config
+copying config/rtabmap.yaml -> /home/poorcsky/csky_ws/install/vio_localization/share/vio_localization/config
+running install_egg_info
+Copying ../../build/vio_localization/vio_localization.egg-info to /home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages/vio_localization-0.0.0-py3.12.egg-info
+running install_scripts
+Installing rgb_resizer script to /home/poorcsky/csky_ws/install/vio_localization/lib/vio_localization
+Installing stereo_sync script to /home/poorcsky/csky_ws/install/vio_localization/lib/vio_localization
+writing list of installed files to '/home/poorcsky/csky_ws/build/vio_localization/install.log'

@@ -1,0 +1,8 @@
+[console_scripts]
+a_star_planner = navigation_manager.a_star_planner:main
+agpf_planner = navigation_manager.agpf_planner:main
+depth_filter = navigation_manager.depth_filter:main
+obstacle_detector = navigation_manager.obstacle_detector:main
+path_follower = navigation_manager.path_follower:main
+safety_layer = navigation_manager.safety_layer:main
+waypoint_manager = navigation_manager.waypoint_manager:main

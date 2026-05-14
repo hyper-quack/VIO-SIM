@@ -1,0 +1,142 @@
+[0.203s] Invoking command in '/home/poorcsky/csky_ws/build/px4_ros_com': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake /home/poorcsky/csky_ws/src/px4_ros_com -DCMAKE_INSTALL_PREFIX=/home/poorcsky/csky_ws/install/px4_ros_com
+[0.239s] -- The C compiler identification is GNU 13.3.0
+[0.270s] -- The CXX compiler identification is GNU 13.3.0
+[0.281s] -- Detecting C compiler ABI info
+[0.336s] -- Detecting C compiler ABI info - done
+[0.344s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.344s] -- Detecting C compile features
+[0.345s] -- Detecting C compile features - done
+[0.351s] -- Detecting CXX compiler ABI info
+[0.412s] -- Detecting CXX compiler ABI info - done
+[0.417s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.417s] -- Detecting CXX compile features
+[0.418s] -- Detecting CXX compile features - done
+[0.420s] -- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.511s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[0.572s] -- Found builtin_interfaces: 2.0.3 (/opt/ros/jazzy/share/builtin_interfaces/cmake)
+[0.597s] -- Found rosidl_generator_c: 4.6.7 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+[0.605s] -- Found rosidl_generator_cpp: 4.6.7 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+[0.614s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.624s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.634s] -- Found eigen3_cmake_module: 0.3.0 (/opt/ros/jazzy/share/eigen3_cmake_module/cmake)
+[0.638s] -- Found Eigen3: TRUE (found version "3.4.0") 
+[0.639s] -- Found geometry_msgs: 5.3.7 (/opt/ros/jazzy/share/geometry_msgs/cmake)
+[0.656s] -- Found px4_msgs: 2.0.1 (/home/poorcsky/csky_ws/install/px4_msgs/share/px4_msgs/cmake)
+[0.674s] -- Found rclcpp: 28.1.18 (/opt/ros/jazzy/share/rclcpp/cmake)
+[0.701s] -- Found rmw_implementation_cmake: 7.3.3 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)
+[0.704s] -- Found rmw_fastrtps_cpp: 8.4.3 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)
+[0.756s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.13")  
+[0.768s] -- Found FastRTPS: /opt/ros/jazzy/include (Required is at least version "2.13") 
+[0.784s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.825s] -- Found sensor_msgs: 5.3.7 (/opt/ros/jazzy/share/sensor_msgs/cmake)
+[0.838s] -- Found rclpy: 7.1.11 (/opt/ros/jazzy/share/rclpy/cmake)
+[0.843s] -- Found ament_lint_auto: 0.17.5 (/opt/ros/jazzy/share/ament_lint_auto/cmake)
+[0.916s] -- Added test 'copyright' to check source files copyright and LICENSE
+[0.918s] -- Added test 'cppcheck' to perform static code analysis on C / C++ code
+[0.918s] -- Configured cppcheck include dirs: /home/poorcsky/csky_ws/src/px4_ros_com/include;$<BUILD_INTERFACE:/home/poorcsky/csky_ws/src/px4_ros_com/include/px4_ros_com>
+[0.918s] -- Configured cppcheck exclude dirs and/or files: 
+[0.920s] -- Added test 'cpplint' to check C / C++ code against the Google style
+[0.920s] -- Configured cpplint exclude dirs and/or files: 
+[0.920s] -- Added test 'flake8' to check Python code syntax and style conventions
+[0.920s] -- Configured 'flake8' exclude dirs and/or files: 
+[0.921s] -- Added test 'lint_cmake' to check CMake code style
+[0.921s] -- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+[0.923s] -- Added test 'uncrustify' to check C / C++ code style
+[0.923s] -- Configured uncrustify additional arguments: 
+[0.923s] -- Added test 'xmllint' to check XML markup files
+[0.924s] -- Configuring done (0.7s)
+[0.937s] -- Generating done (0.0s)
+[0.941s] -- Build files have been written to: /home/poorcsky/csky_ws/build/px4_ros_com
+[0.947s] Invoked command in '/home/poorcsky/csky_ws/build/px4_ros_com' returned '0': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake /home/poorcsky/csky_ws/src/px4_ros_com -DCMAKE_INSTALL_PREFIX=/home/poorcsky/csky_ws/install/px4_ros_com
+[0.947s] Invoking command in '/home/poorcsky/csky_ws/build/px4_ros_com': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake --build /home/poorcsky/csky_ws/build/px4_ros_com -- -j32 -l32
+[0.983s] [ 16%] [32mBuilding CXX object CMakeFiles/sensor_combined_listener.dir/src/examples/listeners/sensor_combined_listener.cpp.o[0m
+[0.984s] [ 16%] [32mBuilding CXX object CMakeFiles/frame_transforms.dir/src/lib/frame_transforms.cpp.o[0m
+[0.985s] [ 33%] [32mBuilding CXX object CMakeFiles/debug_vect_advertiser.dir/src/examples/advertisers/debug_vect_advertiser.cpp.o[0m
+[0.985s] [ 33%] [32mBuilding CXX object CMakeFiles/vehicle_gps_position_listener.dir/src/examples/listeners/vehicle_gps_position_listener.cpp.o[0m
+[0.985s] [ 50%] [32mBuilding CXX object CMakeFiles/offboard_control.dir/src/examples/offboard/offboard_control.cpp.o[0m
+[0.985s] [ 50%] [32mBuilding CXX object CMakeFiles/offboard_control_srv.dir/src/examples/offboard/offboard_control_srv.cpp.o[0m
+[0.991s] [ 50%] Built target ament_cmake_python_copy_px4_ros_com
+[1.097s] running egg_info
+[1.097s] creating px4_ros_com.egg-info
+[1.105s] writing px4_ros_com.egg-info/PKG-INFO
+[1.106s] writing dependency_links to px4_ros_com.egg-info/dependency_links.txt
+[1.106s] writing top-level names to px4_ros_com.egg-info/top_level.txt
+[1.106s] writing manifest file 'px4_ros_com.egg-info/SOURCES.txt'
+[1.131s] reading manifest file 'px4_ros_com.egg-info/SOURCES.txt'
+[1.131s] writing manifest file 'px4_ros_com.egg-info/SOURCES.txt'
+[1.150s] [ 50%] Built target ament_cmake_python_build_px4_ros_com_egg
+[3.008s] [ 58%] [32m[1mLinking CXX executable debug_vect_advertiser[0m
+[3.103s] [ 58%] Built target debug_vect_advertiser
+[3.794s] [ 66%] [32m[1mLinking CXX executable offboard_control[0m
+[3.852s] [ 75%] [32m[1mLinking CXX executable offboard_control_srv[0m
+[3.902s] [ 75%] Built target offboard_control
+[3.960s] [ 75%] Built target offboard_control_srv
+[4.188s] [ 83%] [32m[1mLinking CXX shared library libframe_transforms.so[0m
+[4.282s] [ 83%] Built target frame_transforms
+[4.446s] [ 91%] [32m[1mLinking CXX executable sensor_combined_listener[0m
+[4.495s] [100%] [32m[1mLinking CXX executable vehicle_gps_position_listener[0m
+[4.580s] [100%] Built target sensor_combined_listener
+[4.628s] [100%] Built target vehicle_gps_position_listener
+[4.636s] Invoked command in '/home/poorcsky/csky_ws/build/px4_ros_com' returned '0': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake --build /home/poorcsky/csky_ws/build/px4_ros_com -- -j32 -l32
+[4.636s] Invoking command in '/home/poorcsky/csky_ws/build/px4_ros_com': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake --install /home/poorcsky/csky_ws/build/px4_ros_com
+[4.640s] -- Install configuration: ""
+[4.640s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/sensor_combined_listener
+[4.642s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/sensor_combined_listener" to ""
+[4.642s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/vehicle_gps_position_listener
+[4.644s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/vehicle_gps_position_listener" to ""
+[4.644s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/debug_vect_advertiser
+[4.645s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/debug_vect_advertiser" to ""
+[4.645s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/offboard_control
+[4.646s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/offboard_control" to ""
+[4.646s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/offboard_control_srv
+[4.647s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/offboard_control_srv" to ""
+[4.647s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/library_path.sh
+[4.647s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/library_path.dsv
+[4.647s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/include/px4_ros_com
+[4.647s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/include/px4_ros_com/frame_transforms.h
+[4.647s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/libframe_transforms.so
+[4.649s] -- Set non-toolchain portion of runtime path of "/home/poorcsky/csky_ws/install/px4_ros_com/lib/libframe_transforms.so" to ""
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//launch
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//launch/offboard_control_launch.yaml
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//launch/sensor_combined_listener.launch.py
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//test
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//test/pipeline_io_test.py
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//test/test_output.py
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//test/__init__.py
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com//test/test_input.py
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/pythonpath.sh
+[4.649s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/pythonpath.dsv
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com-0.1.0-py3.12.egg-info
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com-0.1.0-py3.12.egg-info/top_level.txt
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com-0.1.0-py3.12.egg-info/SOURCES.txt
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com-0.1.0-py3.12.egg-info/dependency_links.txt
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com-0.1.0-py3.12.egg-info/PKG-INFO
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com/module_to_import.py
+[4.650s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com/__init__.py
+[4.674s] Listing '/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com'...
+[4.674s] Compiling '/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com/__init__.py'...
+[4.674s] Compiling '/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages/px4_ros_com/module_to_import.py'...
+[4.676s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/lib/px4_ros_com/offboard_control.py
+[4.676s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/ament_index/resource_index/package_run_dependencies/px4_ros_com
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/ament_index/resource_index/parent_prefix_path/px4_ros_com
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/ament_prefix_path.sh
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/ament_prefix_path.dsv
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/path.sh
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/environment/path.dsv
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/local_setup.bash
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/local_setup.sh
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/local_setup.zsh
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/local_setup.dsv
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/package.dsv
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/ament_index/resource_index/packages/px4_ros_com
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/export_frame_transformsExport.cmake
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/export_frame_transformsExport-noconfig.cmake
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/ament_cmake_export_dependencies-extras.cmake
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/ament_cmake_export_targets-extras.cmake
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/ament_cmake_export_include_directories-extras.cmake
+[4.677s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/ament_cmake_export_libraries-extras.cmake
+[4.678s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/px4_ros_comConfig.cmake
+[4.678s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/cmake/px4_ros_comConfig-version.cmake
+[4.678s] -- Installing: /home/poorcsky/csky_ws/install/px4_ros_com/share/px4_ros_com/package.xml
+[4.678s] Invoked command in '/home/poorcsky/csky_ws/build/px4_ros_com' returned '0': CMAKE_PREFIX_PATH=/home/poorcsky/csky_ws/install/px4_msgs:/home/poorcsky/csky_ws/install/px4_ros_com:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/poorcsky/csky_ws/install/vio_localization:/home/poorcsky/csky_ws/install/mission_manager:/home/poorcsky/csky_ws/install/flight_controller_bridge:/home/poorcsky/csky_ws/install/navigation_manager:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/poorcsky/csky_ws/install/px4_msgs/lib:/home/poorcsky/csky_ws/install/px4_ros_com/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib PYTHONPATH=/home/poorcsky/csky_ws/install/px4_msgs/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/vio_localization/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/px4_ros_com/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/mission_manager/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/flight_controller_bridge/lib/python3.12/site-packages:/home/poorcsky/csky_ws/install/navigation_manager/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages /usr/bin/cmake --install /home/poorcsky/csky_ws/build/px4_ros_com

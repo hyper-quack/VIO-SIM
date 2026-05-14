@@ -1,0 +1,2 @@
+[console_scripts]
+mission_node = mission_manager.mission_node:main
