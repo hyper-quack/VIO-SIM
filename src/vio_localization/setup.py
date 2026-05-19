@@ -25,7 +25,6 @@ setup(
     license='MIT',
     entry_points={
     'console_scripts': [
-        'rgb_resizer = vio_localization.rgb_resizer:main',
         'stereo_sync = vio_localization.stereo_sync:main',
     ],
 },

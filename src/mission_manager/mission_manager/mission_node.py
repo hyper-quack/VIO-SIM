@@ -10,6 +10,7 @@ from px4_msgs.msg import (
 )
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from std_msgs.msg import Bool
+from sensor_msgs.msg import LaserScan
 import math
 
 
@@ -68,6 +69,8 @@ class MissionManager(Node):
 
         self.nav_start_pub = self.create_publisher(
             Bool, '/start_navigation', 10)
+        self.map_reset_pub = self.create_publisher(
+            Bool, '/map_reset', 10)
 
         self.goal_pub = self.create_publisher(
             PoseStamped, '/goal_pose', 10)
@@ -93,13 +96,18 @@ class MissionManager(Node):
             Bool, '/navigation_active',
             self.navigation_active_callback, 10)
 
+        self.mtf01_sub = self.create_subscription(
+            LaserScan, '/mtf01/lidar',
+            self.mtf01_callback, 10)
+
         self.goal_raw_sub = self.create_subscription(
             PoseStamped, '/goal_raw',
             self.goal_raw_callback, 10)
 
         # Mission state
         self.state = self.STATE_IDLE
-        self.armed = False
+        self.armed    = False
+        self.nav_state = 0    # PX4 nav_state; 14 = OFFBOARD
 
         # PX4 local position
         self.current_x = 0.0
@@ -114,9 +122,16 @@ class MissionManager(Node):
 
         self.map_build_counter = 0
         self.plan_counter = 0
+        self.arm_counter  = 0    # ticks inside STATE_ARMING
         self.navigation_started = False
         self.emergency_counter = 0
         self.nav_inactive_counter = 0
+        self.stuck_counter = 0
+        self.stuck_threshold = 200  # 4s at 50Hz
+        self.recovery_counter = 0
+        self.in_recovery = False
+        self.nav_goal_received = False
+        self.altitude_m = 0.0
 
         self.raw_goal_x = self.GOAL_X
         self.raw_goal_y = self.GOAL_Y
@@ -139,7 +154,7 @@ class MissionManager(Node):
         # Reduce to 0.20 if still too fast.
         self.MAX_YAW_RATE = 0.30
 
-        self.timer = self.create_timer(0.05, self.mission_loop)
+        self.timer = self.create_timer(0.02, self.mission_loop)
 
         self.get_logger().info('Mission Manager démarré ✓')
 
@@ -148,7 +163,8 @@ class MissionManager(Node):
     # ──────────────────────────────────────────────────────────────────
 
     def status_callback(self, msg):
-        self.armed = (msg.arming_state == 2)
+        self.armed     = (msg.arming_state == 2)
+        self.nav_state = msg.nav_state
 
     def odom_callback(self, msg):
         # PX4 local frame
@@ -164,7 +180,7 @@ class MissionManager(Node):
         pose.header.frame_id = 'odom'
         pose.pose.position.x = float(self.current_y) + self.SPAWN_X
         pose.pose.position.y = float(self.current_x) + self.SPAWN_Y
-        pose.pose.position.z = 0.0
+        pose.pose.position.z =  float(-self.current_z)
         pose.pose.orientation.w = 1.0
         self.pose_pub.publish(pose)
 
@@ -182,15 +198,25 @@ class MissionManager(Node):
         if not msg.data and self.state == self.STATE_FOLLOW_PATH:
             self.nav_inactive_counter += 1
 
-            if self.nav_inactive_counter >= 20:
+            if self.nav_inactive_counter >= 50:   # 50 × 0.02 s = 1 s
                 self.get_logger().info('🎯 Mission complète — atterrissage')
                 self.state = self.STATE_LAND
         else:
             self.nav_inactive_counter = 0
+        self.stuck_counter = 0
+        self.stuck_threshold = 200  # 4s at 50Hz
+        self.recovery_counter = 0
+        self.in_recovery = False
+
+    def mtf01_callback(self, msg):
+        if msg.ranges:
+            self.altitude_m = float(min(r for r in msg.ranges if r > 0.01))
 
     def goal_raw_callback(self, msg):
         self.raw_goal_x = float(msg.pose.position.x)
         self.raw_goal_y = float(msg.pose.position.y)
+        if self.state == self.STATE_PLAN_PATH:
+            self.nav_goal_received = True
 
         self.get_logger().info(
             f'Raw goal reçu: ({self.raw_goal_x:.2f}, {self.raw_goal_y:.2f})',
@@ -256,7 +282,7 @@ class MissionManager(Node):
         goal.header.frame_id = 'odom'
         goal.pose.position.x = float(self.raw_goal_x)
         goal.pose.position.y = float(self.raw_goal_y)
-        goal.pose.position.z = 0.0
+        goal.pose.position.z = 2.0
         goal.pose.orientation.w = 1.0
 
         self.goal_pub.publish(goal)
@@ -345,17 +371,19 @@ class MissionManager(Node):
         wy = self.current_x + self.SPAWN_Y
 
         if self.state == self.STATE_IDLE:
+            # Stream at 50 Hz so PX4 sees fresh offboard setpoints from the start.
             self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
+            self.publish_setpoint(self.current_x, self.current_y, self.current_z)
 
-            if self.offboard_counter >= 20:
+            # 100 ticks × 0.02 s = 2 s minimum streaming before any commands.
+            if self.offboard_counter >= 100:
                 self.state = self.STATE_WAIT_EKF
                 self.wait_counter = 0
                 self.get_logger().info('Attente stabilisation EKF2...')
 
         elif self.state == self.STATE_WAIT_EKF:
             self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
+            self.publish_setpoint(self.current_x, self.current_y, self.current_z)
 
             self.wait_counter += 1
 
@@ -363,54 +391,75 @@ class MissionManager(Node):
                 f'Attente EKF2... {self.wait_counter}/200',
                 throttle_duration_sec=1.0)
 
+            # 200 ticks × 0.02 s = 4 s — EKF/VIO should be fully converged.
             if self.wait_counter >= 200:
-                self.get_logger().info('Activation mode Offboard...')
-                self.send_command(176, 1.0, 6.0)
+                self.get_logger().info('Envoi commande mode Offboard...')
+                self.send_command(176, 1.0, 6.0)   # MAV_CMD_DO_SET_MODE, offboard
+                self.arm_counter = 0
                 self.state = self.STATE_ARMING
 
         elif self.state == self.STATE_ARMING:
+            # Must keep streaming — PX4 drops offboard if setpoints go stale.
             self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
+            self.publish_setpoint(self.current_x, self.current_y, self.current_z)
 
-            if not self.armed:
-                self.get_logger().info('Armement...', throttle_duration_sec=1.0)
-                self.send_command(400, 1.0)
+            self.arm_counter += 1
+
+            if self.nav_state != 14:
+                # Not in offboard yet — retry mode switch every 50 ticks (1 s).
+                if self.arm_counter % 50 == 1:
+                    self.get_logger().info(
+                        f'Retry mode offboard (nav_state={self.nav_state})...')
+                    self.send_command(176, 1.0, 6.0)
+                self.get_logger().info(
+                    f'Attente mode offboard — nav_state={self.nav_state} (cible=14)',
+                    throttle_duration_sec=1.0)
+
+            elif not self.armed:
+                # Offboard confirmed — send arm command every 25 ticks (0.5 s).
+                if self.arm_counter % 25 == 1:
+                    self.get_logger().info('Armement...')
+                    self.send_command(400, 1.0)
+                self.get_logger().info(
+                    'Offboard OK — attente armement...',
+                    throttle_duration_sec=1.0)
+
             else:
-                self.get_logger().info('Armé — décollage vers 2m...')
+                # nav_state==14 AND armed — safe to take off.
+                self.get_logger().info('Offboard + Armé ✓ — décollage vers 2m...')
                 self.state = self.STATE_TAKEOFF
 
         elif self.state == self.STATE_TAKEOFF:
-            self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
-
+            self.publish_offboard_mode(velocity=True)
+            if self.altitude_m < 1.8:
+                self.publish_velocity(0.0, 0.0, -0.3)
+            else:
+                self.publish_velocity(0.0, 0.0, 0.0)
             self.get_logger().info(
-                f'Altitude: {-self.current_z:.2f}m / cible: 2.00m',
+                f'Takeoff alt={self.altitude_m:.2f}m cible=2.0m',
                 throttle_duration_sec=1.0)
-
-            if abs(self.current_z - self.target_altitude) < 0.3:
-                self.get_logger().info('Altitude atteinte — construction carte...')
+            if self.altitude_m >= 1.8:
+                self.get_logger().info('Takeoff complete — construction carte...')
                 self.state = self.STATE_BUILD_MAP
                 self.map_build_counter = 0
 
         elif self.state == self.STATE_BUILD_MAP:
-            self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
-
+            # Hold current position — use actual NED z not hardcoded
+            self.publish_offboard_mode(velocity=False)
+            self.publish_setpoint(self.current_x, self.current_y, self.current_z)
             self.map_build_counter += 1
-
             self.get_logger().info(
-                f'Construction carte... {self.map_build_counter}/100',
+                f'Construction carte... {self.map_build_counter}/250 alt={self.altitude_m:.2f}m',
                 throttle_duration_sec=2.0)
-
-            if self.map_build_counter >= 100:
+            if self.map_build_counter >= 250:
                 self.get_logger().info('Carte construite — envoi goal + planification...')
                 self._publish_goal()
+                self.nav_goal_received = False
                 self.state = self.STATE_PLAN_PATH
                 self.plan_counter = 0
-
         elif self.state == self.STATE_PLAN_PATH:
             self.publish_offboard_mode()
-            self.publish_setpoint(0.0, 0.0, self.target_altitude)
+            self.publish_setpoint(self.current_x, self.current_y, self.current_z)
 
             self._publish_goal()
 
@@ -421,20 +470,18 @@ class MissionManager(Node):
             self.plan_counter += 1
 
             self.get_logger().info(
-                f'Planification... {self.plan_counter}/40',
+                f'Planification... {self.plan_counter}/150 '
+                f'goal_ok={self.nav_goal_received}',
                 throttle_duration_sec=1.0)
 
-            if self.plan_counter >= 40:
+            if self.plan_counter >= 150 and self.nav_goal_received:  # 150 × 0.02 s = 3 s
                 self.plan_counter = 0
                 self.get_logger().info('Navigation démarrée — suivi PathFollower...')
                 self.state = self.STATE_FOLLOW_PATH
 
         elif self.state == self.STATE_FOLLOW_PATH:
             self.publish_offboard_mode(velocity=True)
-
-            # Keep goal fresh for waypoint/A* system.
             self._publish_goal()
-
             nav_msg = Bool()
             nav_msg.data = True
             self.nav_start_pub.publish(nav_msg)
@@ -442,26 +489,49 @@ class MissionManager(Node):
             if self.safe_velocity is not None:
                 world_vx = self.safe_velocity.twist.linear.x
                 world_vy = self.safe_velocity.twist.linear.y
-                vz = self.safe_velocity.twist.linear.z
-
-                # World -> PX4 local velocity
-                # PX4 X/North = World Y
-                # PX4 Y/East  = World X
+                vz = -self.safe_velocity.twist.linear.z
                 px4_vx = world_vy
                 px4_vy = world_vx
+                speed = math.sqrt(world_vx**2 + world_vy**2)
 
-                # Smooth yaw following movement direction
-                px4_yaw = self.compute_smooth_px4_yaw(world_vx, world_vy)
+                # Stuck detection — only when path_follower active
+                if speed < 0.02:
+                    self.stuck_counter += 1
+                else:
+                    self.stuck_counter = 0
+                    self.in_recovery = False
 
-                self.publish_velocity(px4_vx, px4_vy, vz, px4_yaw)
+                # Recovery — back up then resume
+                if self.stuck_counter > self.stuck_threshold and not self.in_recovery:
+                    self.stuck_counter = 0
+                    self.in_recovery = True
+                    self.recovery_counter = 0
+                    self.get_logger().warn('STUCK — backing up for recovery')
+
+                if self.in_recovery:
+                    self.recovery_counter += 1
+                    if self.recovery_counter < 50:
+                        self.publish_velocity(-0.1, 0.0, 0.0, self.last_cmd_yaw)
+                    elif self.recovery_counter < 100:
+                        self.publish_velocity(0.0, 0.0, -0.1, self.last_cmd_yaw)
+                    else:
+                        self.in_recovery = False
+                        self.stuck_counter = 0
+                    self.get_logger().warn(
+                        f'Recovery {self.recovery_counter}/100',
+                        throttle_duration_sec=1.0)
+                else:
+                    px4_yaw = self.compute_smooth_px4_yaw(world_vx, world_vy)
+                    self.publish_velocity(px4_vx, px4_vy, vz, px4_yaw)
             else:
+                # No velocity yet — hover in place, reset stuck counter
+                self.stuck_counter = 0
+                self.in_recovery = False
                 self.publish_velocity(0.0, 0.0, 0.0, self.last_cmd_yaw)
 
             self.get_logger().info(
-                f'Navigation PathFollower — world pos: ({wx:.2f}, {wy:.2f}) '
-                f'yaw_cmd:{self.last_cmd_yaw:.2f}',
+                f'FOLLOW_PATH world:({wx:.2f},{wy:.2f}) yaw:{self.last_cmd_yaw:.2f}',
                 throttle_duration_sec=2.0)
-
         elif self.state == self.STATE_EMERGENCY_STOP:
             self.publish_offboard_mode(velocity=True)
             self.publish_velocity(0.0, 0.0, 0.0, self.last_cmd_yaw)
@@ -469,10 +539,10 @@ class MissionManager(Node):
             self.emergency_counter += 1
 
             self.get_logger().error(
-                f'EMERGENCY STOP — hovering ({self.emergency_counter}/100)',
+                f'EMERGENCY STOP — hovering ({self.emergency_counter}/250)',
                 throttle_duration_sec=1.0)
 
-            if self.emergency_counter >= 100:
+            if self.emergency_counter >= 250:   # 250 × 0.02 s = 5 s
                 self.get_logger().error('Emergency timeout → atterrissage')
                 self.state = self.STATE_LAND
 

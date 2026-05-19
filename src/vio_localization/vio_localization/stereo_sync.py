@@ -20,11 +20,15 @@ class StereoSync(Node):
         self.left_info_sub  = Subscriber(self, CameraInfo, '/oakd/left/camera_info',  qos_profile=qos)
         self.right_info_sub = Subscriber(self, CameraInfo, '/oakd/right/camera_info', qos_profile=qos)
 
+        # slop=0.10 s — at 15 Hz the inter-frame period is 0.067 s; 0.10 s gives
+        # enough margin for gz-bridge jitter while rejecting mis-paired frames.
+        # The previous slop=10.0 s would synchronise frames 10 seconds apart,
+        # producing wildly inconsistent stereo pairs.
         self.sync = ApproximateTimeSynchronizer(
             [self.left_img_sub, self.right_img_sub,
              self.left_info_sub, self.right_info_sub],
-            queue_size=50,
-            slop=10.0
+            queue_size=20,
+            slop=0.10,
         )
         self.sync.registerCallback(self.sync_callback)
 

@@ -1,327 +1,334 @@
+#!/usr/bin/env python3
+"""
+global_planner.py — Combined global route planner
+ 
+Two modes:
+  MODE 1 — No map file: creates empty map from waypoint boundaries, uses A*
+  MODE 2 — Map file provided: loads it, uses A* on known obstacles
+ 
+In both modes:
+  - Does NOT read live /costmap (that's for local planner)
+  - Plans on a COARSE grid (0.5m cells)
+  - Outputs sparse waypoints for local planner
+  - Replans only when goal changes or local planner reports stuck
+ 
+Map file format:
+  PNG or PGM image where:
+    black (0)   = wall/obstacle
+    white (255) = free space
+  Accompanied by parameters: resolution, origin_x, origin_y
+ 
+Reads:
+  /current_pose       <- drone position
+  /goal_pose          <- mission goal
+  /navigation_active  <- only plan when active
+  /local_planner_stuck <- local planner cannot reach waypoint (future)
+ 
+Publishes:
+  /planned_path       <- sparse waypoints
+  /global_costmap     <- visualization of the global map for RViz
+ 
+Parameters (ROS):
+  map_file            <- path to PNG/PGM map image (empty = no map)
+  map_resolution      <- metres per pixel of the map image
+  map_origin_x        <- world X of map image bottom-left corner
+  map_origin_y        <- world Y of map image bottom-left corner
+"""
+ 
+import math
+import numpy as np
+import heapq
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path, OccupancyGrid
+from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import Bool
-import numpy as np
-import heapq
-import math
 import cv2
-
-class AStarPlanner(Node):
-    OBSTACLE_THRESHOLD    = 70
-    INFLATION_RADIUS      = 6       # cells (XY plane)
-    INFLATION_RADIUS_Z    = 3       # cells (Z axis)
-    PATH_CLEARANCE_RADIUS = 6
-    DIAGONAL_COST         = 1.414
-    CARDINAL_COST         = 1.0
-    TRIAGONAL_COST        = 1.732   # sqrt(3) for 3D diagonal
-    REPLAN_INTERVAL       = 0.35
-    PATH_VALIDATION_INTERVAL = 0.50
-    BLOCK_ZONE_RADIUS     = 6
-    PATH_CHECK_STEP       = 0.10
-    DOWNSAMPLE_STEP_CELLS = 4
-    SAME_GOAL_EPS         = 0.05
-
-    # 3D grid parameters
-    CORRIDOR_LENGTH = 20.0
-    CORRIDOR_WIDTH  = 6.0
-    CORRIDOR_HEIGHT = 3.0
-    RESOLUTION      = 0.10
-    GRID_W = int(20.0 / 0.10)   # 200
-    GRID_H = int(6.0  / 0.10)   # 60
-    GRID_Z = int(3.0  / 0.10)   # 30
-    ORIGIN_X = 0.0
-    ORIGIN_Y = 0.0
-    ORIGIN_Z = 0.0
+ 
+ 
+# Parameters
+WAYPOINT_SPACING    = 3.0
+SAME_GOAL_EPS       = 0.3
+REPLAN_INTERVAL     = 2.0
+DEFAULT_ALTITUDE    = 2.0
+GOAL_REACHED_DIST   = 0.5
+PUBLISH_RATE        = 1.0
+ 
+COARSE_RESOLUTION   = 0.5
+INFLATION_RADIUS    = 2
+DIAGONAL_COST       = 1.414
+CARDINAL_COST       = 1.0
+ 
+MAP_PADDING         = 3.0
+ 
+ 
+class GlobalPlanner(Node):
+ 
     def __init__(self):
         super().__init__('a_star_planner')
-
+ 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
-        )
-
-        # 3D obstacle map
-        self.obstacle_3d = np.zeros(
-            (self.GRID_Z, self.GRID_H, self.GRID_W), dtype=np.uint8
-        )
-        self.inflated_3d = np.zeros(
-            (self.GRID_Z, self.GRID_H, self.GRID_W), dtype=np.uint8
-        )
-
-        # 2D costmap (from obstacle_detector projection)
-        self.costmap_2d = None
-
-        # State
-        self.current_pose     = None
-        self.goal             = None
-        self.emergency        = False
-        self.blocked_cells    = set()
-        self.last_path        = None
-        self.replan_requested = False
-        self.costmap_dirty    = False
-        self.last_plan_time   = 0.0
-        self.last_validation_time = 0.0
-
-        self.grid_width  = self.GRID_W
-        self.grid_height = self.GRID_H
-        self.resolution  = self.RESOLUTION
-        self.origin_x    = self.ORIGIN_X
-        self.origin_y    = self.ORIGIN_Y
-
-        # Subscribers
-        self.create_subscription(
-            OccupancyGrid, '/costmap',
-            self.costmap_callback, 10
-        )
-        self.create_subscription(
-            PoseStamped, '/current_pose',
-            self.pose_callback, qos
-        )
-        self.create_subscription(
-            PoseStamped, '/goal_pose',
-            self.goal_callback, 10
-        )
-        self.create_subscription(
-            Bool, '/emergency_stop',
-            self.emergency_callback, 10
-        )
-        self.create_subscription(
-            PoseStamped, '/block_zone',
-            self.block_zone_callback, 10
-        )
-
-        self.path_pub = self.create_publisher(Path, '/planned_path', 10)
-        self.create_timer(0.1, self.periodic_check)
-
+            depth=10)
+ 
+        self.declare_parameter('map_file', '')
+        self.declare_parameter('map_resolution', 0.05)
+        self.declare_parameter('map_origin_x', 0.0)
+        self.declare_parameter('map_origin_y', 0.0)
+ 
+        self.current_pose   = None
+        self.goal           = None
+        self.nav_active     = False
+        self.emergency      = False
+        self.last_path      = None
+        self.last_plan_time = 0.0
+        self.local_stuck    = False
+ 
+        self.map_loaded       = False
+        self.global_map       = None
+        self.map_resolution   = COARSE_RESOLUTION
+        self.map_origin_x     = 0.0
+        self.map_origin_y     = 0.0
+        self.map_width        = 0
+        self.map_height       = 0
+        self.inflated_map     = None
+ 
+        self.all_goals = []
+ 
+        self._try_load_map()
+ 
+        self.create_subscription(PoseStamped, '/current_pose', self.pose_cb, qos)
+        self.create_subscription(PoseStamped, '/goal_pose', self.goal_cb, 10)
+        self.create_subscription(Bool, '/navigation_active', self.nav_active_cb, 10)
+        self.create_subscription(Bool, '/emergency_stop', self.emergency_cb, 10)
+        self.create_subscription(Bool, '/local_planner_stuck', self.stuck_cb, 10)
+ 
+        self.path_pub    = self.create_publisher(Path, '/global_path', 10)
+        self.map_viz_pub = self.create_publisher(OccupancyGrid, '/global_costmap', 10)
+ 
+        self.create_timer(1.0 / PUBLISH_RATE, self.periodic_check)
+ 
+        mode = "A* on loaded map" if self.map_loaded else "auto-map from waypoints"
         self.get_logger().info(
-            f'3D A* started ✓  '
-            f'Grid={self.GRID_W}x{self.GRID_H}x{self.GRID_Z}  '
-            f'inflation_xy={self.INFLATION_RADIUS} inflation_z={self.INFLATION_RADIUS_Z}'
-        )
-
-    # ==================================================================
-    # Callbacks
-    # ==================================================================
-    def costmap_callback(self, msg):
-        """Receive 2D projected costmap and expand to 3D."""
-        self.costmap_2d = np.array(
-            msg.data, dtype=np.int8
-        ).reshape(msg.info.height, msg.info.width)
-
-        self.grid_width  = msg.info.width
-        self.grid_height = msg.info.height
-        self.resolution  = msg.info.resolution
-        self.origin_x    = msg.info.origin.position.x
-        self.origin_y    = msg.info.origin.position.y
-
-        self._build_3d_obstacle_map()
-        self.costmap_dirty = True
-
-    def pose_callback(self, msg):
-        self.current_pose = msg
-
-    def goal_callback(self, msg):
-        if self.goal is not None:
-            dx = msg.pose.position.x - self.goal.pose.position.x
-            dy = msg.pose.position.y - self.goal.pose.position.y
-            dz = msg.pose.position.z - self.goal.pose.position.z
-            if math.sqrt(dx*dx + dy*dy + dz*dz) < self.SAME_GOAL_EPS:
+            f'Global Planner started  mode={mode}  '
+            f'coarse_res={COARSE_RESOLUTION}m  spacing={WAYPOINT_SPACING}m')
+ 
+    # === Map loading =============================================
+ 
+    def _try_load_map(self):
+        map_file = self.get_parameter('map_file').get_parameter_value().string_value
+        if not map_file or map_file == '':
+            self.get_logger().info('No map file — will auto-generate from waypoints')
+            return
+ 
+        try:
+            img = cv2.imread(map_file, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                self.get_logger().error(f'Cannot read map file: {map_file}')
                 return
+ 
+            img_resolution = self.get_parameter('map_resolution').get_parameter_value().double_value
+            self.map_origin_x = self.get_parameter('map_origin_x').get_parameter_value().double_value
+            self.map_origin_y = self.get_parameter('map_origin_y').get_parameter_value().double_value
+ 
+            scale = img_resolution / COARSE_RESOLUTION
+            if abs(scale - 1.0) > 0.01:
+                new_w = max(1, int(img.shape[1] * scale))
+                new_h = max(1, int(img.shape[0] * scale))
+                img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+ 
+            obstacle_map = np.zeros_like(img, dtype=np.uint8)
+            obstacle_map[img < 128] = 1
+ 
+            self.global_map = obstacle_map
+            self.map_width  = obstacle_map.shape[1]
+            self.map_height = obstacle_map.shape[0]
+            self.map_resolution = COARSE_RESOLUTION
+ 
+            self._inflate_map()
+            self.map_loaded = True
+ 
+            self.get_logger().info(
+                f'Map loaded: {map_file}  '
+                f'size={self.map_width}x{self.map_height} '
+                f'origin=({self.map_origin_x},{self.map_origin_y})')
+ 
+        except Exception as e:
+            self.get_logger().error(f'Map load error: {e}')
+ 
+    def _create_auto_map(self):
+        if self.current_pose is None:
+            return False
+ 
+        all_points = list(self.all_goals)
+        all_points.append((
+            self.current_pose.pose.position.x,
+            self.current_pose.pose.position.y))
+ 
+        if len(all_points) < 2:
+            return False
+ 
+        xs = [p[0] for p in all_points]
+        ys = [p[1] for p in all_points]
+        min_x = min(xs) - MAP_PADDING
+        max_x = max(xs) + MAP_PADDING
+        min_y = min(ys) - MAP_PADDING
+        max_y = max(ys) + MAP_PADDING
+ 
+        self.map_origin_x = min_x
+        self.map_origin_y = min_y
+        self.map_resolution = COARSE_RESOLUTION
+        self.map_width  = max(1, int((max_x - min_x) / COARSE_RESOLUTION))
+        self.map_height = max(1, int((max_y - min_y) / COARSE_RESOLUTION))
+ 
+        self.global_map = np.zeros(
+            (self.map_height, self.map_width), dtype=np.uint8)
+ 
+        self.global_map[0, :]  = 1
+        self.global_map[-1, :] = 1
+        self.global_map[:, 0]  = 1
+        self.global_map[:, -1] = 1
+ 
+        self._inflate_map()
+        self.map_loaded = True
+ 
+        self.get_logger().info(
+            f'Auto-map created: {self.map_width}x{self.map_height} '
+            f'({(max_x-min_x):.1f}m x {(max_y-min_y):.1f}m) '
+            f'origin=({min_x:.1f},{min_y:.1f})')
+        return True
+ 
+    def _inflate_map(self):
+        if self.global_map is None:
+            return
+        if INFLATION_RADIUS > 0:
+            kernel_size = 2 * INFLATION_RADIUS + 1
+            kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+            self.inflated_map = cv2.dilate(self.global_map, kernel, iterations=1)
+        else:
+            self.inflated_map = self.global_map.copy()
+ 
+    # === Callbacks ===============================================
+ 
+    def pose_cb(self, msg):
+        self.current_pose = msg
+ 
+    def goal_cb(self, msg):
+        gx = msg.pose.position.x
+        gy = msg.pose.position.y
+        self.all_goals.append((gx, gy))
+ 
+        if self.goal is not None:
+            dx = gx - self.goal.pose.position.x
+            dy = gy - self.goal.pose.position.y
+            if math.sqrt(dx * dx + dy * dy) < SAME_GOAL_EPS:
+                return
+ 
         self.goal = msg
         self.last_path = None
-        self.replan_requested = True
-        self.get_logger().info(
-            f'New goal: ({msg.pose.position.x:.2f}, '
-            f'{msg.pose.position.y:.2f}, '
-            f'{msg.pose.position.z:.2f})'
-        )
-
-    def emergency_callback(self, msg):
+        self.get_logger().info(f'New goal: ({gx:.2f}, {gy:.2f}, {msg.pose.position.z:.2f})')
+ 
+    def nav_active_cb(self, msg):
+        self.nav_active = msg.data
+ 
+    def emergency_cb(self, msg):
         self.emergency = msg.data
-
-    def block_zone_callback(self, msg):
-        gx, gy = self._world_to_grid_2d(
-            msg.pose.position.x, msg.pose.position.y
-        )
-        if gx is None:
-            return
-        for dx in range(-self.BLOCK_ZONE_RADIUS, self.BLOCK_ZONE_RADIUS+1):
-            for dy in range(-self.BLOCK_ZONE_RADIUS, self.BLOCK_ZONE_RADIUS+1):
-                nx, ny = gx+dx, gy+dy
-                if 0<=nx<self.GRID_W and 0<=ny<self.GRID_H:
-                    self.blocked_cells.add((nx, ny))
-        self._build_3d_obstacle_map()
-        self.replan_requested = True
-        self.costmap_dirty = True
-
-    # ==================================================================
-    # 3D obstacle map construction
-    # ==================================================================
-    def _build_3d_obstacle_map(self):
-        if self.costmap_2d is None:
-            return
-
-        # Apply blocked cells to 2D map
-        costmap = self.costmap_2d.copy()
-        for gx, gy in self.blocked_cells:
-            if 0<=gx<self.GRID_W and 0<=gy<self.GRID_H:
-                costmap[gy, gx] = 100
-
-        # Binary obstacle mask (2D)
-        obstacle_2d = (costmap >= self.OBSTACLE_THRESHOLD).astype(np.uint8)
-
-        # Inflate 2D with cv2
-        r = self.INFLATION_RADIUS
-        kernel = np.ones((2*r+1, 2*r+1), dtype=np.uint8)
-        inflated_2d = cv2.dilate(obstacle_2d, kernel, iterations=1)
-        inflated_2d[:r, :] = 1
-        inflated_2d[-r:, :] = 1
-        inflated_2d[:, :r] = 1
-        inflated_2d[:, -r:] = 1
-
-        # Expand to 3D — same obstacle footprint at all Z levels
-        # Then apply Z inflation
-        self.obstacle_3d = np.zeros(
-            (self.GRID_Z, self.GRID_H, self.GRID_W), dtype=np.uint8
-        )
-        for z in range(self.GRID_Z):
-            self.obstacle_3d[z] = inflated_2d
-
-        # Z inflation — if a voxel is obstacle, mark neighbors in Z
-        rz = self.INFLATION_RADIUS_Z
-        inflated_3d = self.obstacle_3d.copy()
-        for dz in range(1, rz+1):
-            inflated_3d[dz:,  :, :] |= self.obstacle_3d[:-dz, :, :]
-            inflated_3d[:-dz, :, :] |= self.obstacle_3d[dz:,  :, :]
-
-        # Floor and ceiling margins
-        inflated_3d[:rz, :, :] = 1
-        inflated_3d[-rz:, :, :] = 1
-
-        self.inflated_3d = inflated_3d
-
-    # ==================================================================
-    # Coordinate helpers
-    # ==================================================================
-    def _world_to_grid_3d(self, wx, wy, wz):
-        gx = int((wx - self.ORIGIN_X) / self.RESOLUTION)
-        gy = int((wy - self.ORIGIN_Y) / self.RESOLUTION)
-        gz = int((wz - self.ORIGIN_Z) / self.RESOLUTION)
-        if (0<=gx<self.GRID_W and
-            0<=gy<self.GRID_H and
-            0<=gz<self.GRID_Z):
-            return gx, gy, gz
-        return None, None, None
-
-    def _world_to_grid_2d(self, wx, wy):
-        gx = int((wx - self.ORIGIN_X) / self.RESOLUTION)
-        gy = int((wy - self.ORIGIN_Y) / self.RESOLUTION)
-        if 0<=gx<self.GRID_W and 0<=gy<self.GRID_H:
+ 
+    def stuck_cb(self, msg):
+        if msg.data:
+            self.local_stuck = True
+            self.get_logger().warn('Local planner stuck — will replan globally')
+ 
+    # === Coordinate transforms ===================================
+ 
+    def _world_to_grid(self, wx, wy):
+        gx = int((wx - self.map_origin_x) / self.map_resolution)
+        gy = int((wy - self.map_origin_y) / self.map_resolution)
+        if 0 <= gx < self.map_width and 0 <= gy < self.map_height:
             return gx, gy
         return None, None
-
-    def _grid_to_world_3d(self, gx, gy, gz):
-        wx = gx*self.RESOLUTION + self.ORIGIN_X + self.RESOLUTION/2.0
-        wy = gy*self.RESOLUTION + self.ORIGIN_Y + self.RESOLUTION/2.0
-        wz = gz*self.RESOLUTION + self.ORIGIN_Z + self.RESOLUTION/2.0
-        return wx, wy, wz
-
-    # ==================================================================
-    # A* helpers
-    # ==================================================================
-    def is_free_3d(self, gx, gy, gz):
-        if not (0<=gx<self.GRID_W and 0<=gy<self.GRID_H and 0<=gz<self.GRID_Z):
+ 
+    def _grid_to_world(self, gx, gy):
+        wx = gx * self.map_resolution + self.map_origin_x + self.map_resolution / 2.0
+        wy = gy * self.map_resolution + self.map_origin_y + self.map_resolution / 2.0
+        return wx, wy
+ 
+    # === A* search ===============================================
+ 
+    def is_free(self, gx, gy):
+        if not (0 <= gx < self.map_width and 0 <= gy < self.map_height):
             return False
-        return self.inflated_3d[gz, gy, gx] == 0
-
+        return self.inflated_map[gy, gx] == 0
+ 
     @staticmethod
-    def heuristic_3d(a, b):
-        dx = abs(a[0]-b[0])
-        dy = abs(a[1]-b[1])
-        dz = abs(a[2]-b[2])
-        # Octile distance in 3D
-        dmax = max(dx, dy, dz)
-        dmid = sorted([dx, dy, dz])[1]
-        dmin = min(dx, dy, dz)
-        return (
-            dmax * AStarPlanner.CARDINAL_COST +
-            dmid * (AStarPlanner.DIAGONAL_COST - AStarPlanner.CARDINAL_COST) +
-            dmin * (AStarPlanner.TRIAGONAL_COST - AStarPlanner.DIAGONAL_COST)
-        )
-
-    # ==================================================================
-    # 3D A*
-    # ==================================================================
-    def a_star_3d(self, start, goal):
+    def heuristic(a, b):
+        dx = abs(a[0] - b[0])
+        dy = abs(a[1] - b[1])
+        return CARDINAL_COST * max(dx, dy) + (DIAGONAL_COST - CARDINAL_COST) * min(dx, dy)
+ 
+    def a_star(self, start, goal):
         if start == goal:
             return [start]
-
-        if not self.is_free_3d(*start):
-            start = self._find_nearest_free_3d(start)
+ 
+        if not self.is_free(*start):
+            start = self._find_nearest_free(start)
             if start is None:
                 self.get_logger().error('No free cell near start')
                 return None
-
-        if not self.is_free_3d(*goal):
-            self.get_logger().warn('Goal blocked')
-            return None
-
-        # 26-directional moves
-        moves = []
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                for dz in [-1, 0, 1]:
-                    if dx==0 and dy==0 and dz==0:
-                        continue
-                    nonzero = sum([dx!=0, dy!=0, dz!=0])
-                    if nonzero == 1:
-                        cost = self.CARDINAL_COST
-                    elif nonzero == 2:
-                        cost = self.DIAGONAL_COST
-                    else:
-                        cost = self.TRIAGONAL_COST
-                    moves.append((dx, dy, dz, cost))
-
+ 
+        if not self.is_free(*goal):
+            goal = self._find_nearest_free(goal)
+            if goal is None:
+                self.get_logger().warn('No free cell near goal')
+                return None
+ 
+        moves = [
+            (-1, 0, CARDINAL_COST),  (1, 0, CARDINAL_COST),
+            (0, -1, CARDINAL_COST),  (0, 1, CARDINAL_COST),
+            (-1, -1, DIAGONAL_COST), (-1, 1, DIAGONAL_COST),
+            (1, -1, DIAGONAL_COST),  (1, 1, DIAGONAL_COST),
+        ]
+ 
         open_set  = []
         came_from = {}
         g_score   = {start: 0.0}
         closed    = set()
-
         heapq.heappush(open_set, (0.0, start))
-
+ 
+        max_iter = self.map_width * self.map_height
+        iterations = 0
+ 
         while open_set:
+            iterations += 1
+            if iterations > max_iter:
+                self.get_logger().warn('A* exceeded max iterations')
+                return None
+ 
             _, current = heapq.heappop(open_set)
             if current in closed:
                 continue
             closed.add(current)
-
+ 
             if current == goal:
                 return self._reconstruct(came_from, current)
-
-            for dx, dy, dz, move_cost in moves:
-                nx = current[0]+dx
-                ny = current[1]+dy
-                nz = current[2]+dz
-                neighbor = (nx, ny, nz)
-
+ 
+            for dx, dy, cost in moves:
+                neighbor = (current[0] + dx, current[1] + dy)
                 if neighbor in closed:
                     continue
-                if not self.is_free_3d(nx, ny, nz):
+                if not self.is_free(*neighbor):
                     continue
-
-                tentative_g = g_score[current] + move_cost
+                tentative_g = g_score[current] + cost
                 if tentative_g < g_score.get(neighbor, float('inf')):
                     came_from[neighbor] = current
-                    g_score[neighbor]   = tentative_g
-                    f = tentative_g + self.heuristic_3d(neighbor, goal)
+                    g_score[neighbor] = tentative_g
+                    f = tentative_g + self.heuristic(neighbor, goal)
                     heapq.heappush(open_set, (f, neighbor))
-
+ 
         return None
-
+ 
     def _reconstruct(self, came_from, current):
         path = [current]
         while current in came_from:
@@ -329,162 +336,199 @@ class AStarPlanner(Node):
             path.append(current)
         path.reverse()
         return path
-
-    def _find_nearest_free_3d(self, cell, max_radius=20):
-        if self.is_free_3d(*cell):
+ 
+    def _find_nearest_free(self, cell, max_radius=20):
+        if self.is_free(*cell):
             return cell
-        for r in range(1, max_radius+1):
-            for dx in range(-r, r+1):
-                for dy in range(-r, r+1):
-                    for dz in range(-r, r+1):
-                        if max(abs(dx),abs(dy),abs(dz)) != r:
-                            continue
-                        nx = cell[0]+dx
-                        ny = cell[1]+dy
-                        nz = cell[2]+dz
-                        if self.is_free_3d(nx, ny, nz):
-                            return (nx, ny, nz)
+        for r in range(1, max_radius + 1):
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    if max(abs(dx), abs(dy)) != r:
+                        continue
+                    nx = cell[0] + dx
+                    ny = cell[1] + dy
+                    if self.is_free(nx, ny):
+                        return (nx, ny)
         return None
-
-    # ==================================================================
-    # Path downsampling
-    # ==================================================================
-    @staticmethod
-    def _sign(x):
-        return (x>0)-(x<0)
-
-    def downsample_path(self, path, step_cells=4):
-        if path is None or len(path) <= 2:
-            return path
-        result = [path[0]]
-        for i in range(1, len(path)-1):
-            prev, curr, nxt = path[i-1], path[i], path[i+1]
-            d1 = tuple(self._sign(curr[j]-prev[j]) for j in range(3))
-            d2 = tuple(self._sign(nxt[j]-curr[j])  for j in range(3))
-            if d1 != d2 or (i % step_cells) == 0:
-                result.append(curr)
-        result.append(path[-1])
-        return result
-
-    # ==================================================================
-    # Path validity
-    # ==================================================================
-    def is_path_still_valid(self):
-        if self.last_path is None:
-            return False
-        for pose in self.last_path.poses:
-            wx = pose.pose.position.x
-            wy = pose.pose.position.y
-            wz = pose.pose.position.z
-            gx, gy, gz = self._world_to_grid_3d(wx, wy, wz)
-            if gx is None:
-                return False
-            if not self.is_free_3d(gx, gy, gz):
-                return False
-        return True
-
-    # ==================================================================
-    # Periodic check
-    # ==================================================================
-    def periodic_check(self):
-        if self.emergency:
-            return
-        if self.current_pose is None or self.goal is None:
-            return
-
-        now = self.get_clock().now().nanoseconds * 1e-9
-
-        if self.last_path is None:
-            if (now - self.last_plan_time) > self.REPLAN_INTERVAL:
-                self.plan()
-                self.last_plan_time = now
-            return
-
-        if self.replan_requested:
-            if (now - self.last_plan_time) > self.REPLAN_INTERVAL:
-                self.plan()
-                self.last_plan_time = now
-            return
-
-        if self.costmap_dirty and (now - self.last_plan_time) > self.REPLAN_INTERVAL:
-            self.costmap_dirty = False
-            self.last_validation_time = now
-            if not self.is_path_still_valid():
-                self.get_logger().warn('Path blocked — replanning')
-                self.plan()
-                self.last_plan_time = now
-            return
-
-        if (now - self.last_validation_time) > self.PATH_VALIDATION_INTERVAL:
-            self.last_validation_time = now
-            if not self.is_path_still_valid():
-                self.get_logger().warn('Backup check — replanning')
-                self.plan()
-                self.last_plan_time = now
-
-    # ==================================================================
-    # Plan
-    # ==================================================================
+ 
+    # === Path simplification =====================================
+ 
+    def simplify_path(self, path_cells):
+        if path_cells is None or len(path_cells) <= 2:
+            return path_cells
+ 
+        turning = [path_cells[0]]
+        for i in range(1, len(path_cells) - 1):
+            prev, curr, nxt = path_cells[i - 1], path_cells[i], path_cells[i + 1]
+            d1 = (_sign(curr[0] - prev[0]), _sign(curr[1] - prev[1]))
+            d2 = (_sign(nxt[0] - curr[0]),  _sign(nxt[1] - curr[1]))
+            if d1 != d2:
+                turning.append(curr)
+        turning.append(path_cells[-1])
+ 
+        if len(turning) <= 2:
+            return turning
+ 
+        spaced = [turning[0]]
+        accum = 0.0
+        for i in range(1, len(turning)):
+            wx0, wy0 = self._grid_to_world(*turning[i - 1])
+            wx1, wy1 = self._grid_to_world(*turning[i])
+            dist = math.sqrt((wx1 - wx0) ** 2 + (wy1 - wy0) ** 2)
+            accum += dist
+            if accum >= WAYPOINT_SPACING:
+                spaced.append(turning[i])
+                accum = 0.0
+ 
+        if spaced[-1] != turning[-1]:
+            spaced.append(turning[-1])
+        return spaced
+ 
+    # === Straight line fallback ===================================
+ 
+    def straight_line_waypoints(self, start, goal):
+        sx, sy, sz = start
+        gx, gy, gz = goal
+        dx = gx - sx
+        dy = gy - sy
+        dz = gz - sz
+        total_dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+ 
+        if total_dist < GOAL_REACHED_DIST:
+            return [(gx, gy, gz)]
+ 
+        n = max(1, int(total_dist / WAYPOINT_SPACING))
+        waypoints = []
+        for i in range(1, n):
+            t = i / n
+            waypoints.append((sx + dx * t, sy + dy * t, sz + dz * t))
+        waypoints.append((gx, gy, gz))
+        return waypoints
+ 
+    # === Main planning ============================================
+ 
     def plan(self):
         if self.current_pose is None or self.goal is None:
             return False
-
-        # Current pose in 3D grid
-        cx = self.current_pose.pose.position.x
-        cy = self.current_pose.pose.position.y
-        cz = self.current_pose.pose.position.z
-        sx, sy, sz = self._world_to_grid_3d(cx, cy, cz)
-
-        # Goal in 3D grid
-        gx_w = self.goal.pose.position.x
-        gy_w = self.goal.pose.position.y
-        gz_w = self.goal.pose.position.z
-        gx, gy, gz = self._world_to_grid_3d(gx_w, gy_w, gz_w)
-
-        if sx is None or gx is None:
-            self.get_logger().error('Position outside 3D grid')
-            return False
-
-        start = (sx, sy, sz)
-        goal  = (gx, gy, gz)
-
-        self.get_logger().info(f'3D A*: {start} -> {goal}')
-
-        path_cells = self.a_star_3d(start, goal)
-        if path_cells is None:
-            self.get_logger().warn('No 3D path found')
-            return False
-
-        dense = self.downsample_path(path_cells, self.DOWNSAMPLE_STEP_CELLS)
-        self.get_logger().info(
-            f'Path found: {len(path_cells)} cells -> {len(dense)} waypoints'
-        )
-
+ 
+        sx = self.current_pose.pose.position.x
+        sy = self.current_pose.pose.position.y
+        sz = self.current_pose.pose.position.z
+ 
+        gx = self.goal.pose.position.x
+        gy = self.goal.pose.position.y
+        gz = self.goal.pose.position.z
+        if gz < 0.5 or gz > 4.0:
+            gz = DEFAULT_ALTITUDE
+ 
+        if not self.map_loaded:
+            self._create_auto_map()
+ 
+        waypoints_3d = None
+        if self.map_loaded and self.inflated_map is not None:
+            sg = self._world_to_grid(sx, sy)
+            gg = self._world_to_grid(gx, gy)
+ 
+            if sg[0] is not None and gg[0] is not None:
+                path_cells = self.a_star(sg, gg)
+                if path_cells is not None:
+                    sparse = self.simplify_path(path_cells)
+                    waypoints_3d = []
+                    for idx, cell in enumerate(sparse):
+                        wx, wy = self._grid_to_world(*cell)
+                        t = idx / max(1, len(sparse) - 1) if len(sparse) > 1 else 1.0
+                        wz = sz + (gz - sz) * t
+                        waypoints_3d.append((wx, wy, wz))
+                    self.get_logger().info(
+                        f'A* global: {len(path_cells)} cells -> {len(waypoints_3d)} waypoints')
+                else:
+                    self.get_logger().warn('A* failed — falling back to straight line')
+ 
+        if waypoints_3d is None:
+            waypoints_3d = self.straight_line_waypoints((sx, sy, sz), (gx, gy, gz))
+            self.get_logger().info(f'Straight line: {len(waypoints_3d)} waypoints')
+ 
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
         path_msg.header.frame_id = 'odom'
-
-        for cell in dense:
-            wx, wy, wz = self._grid_to_world_3d(*cell)
+ 
+        for wx, wy, wz in waypoints_3d:
             pose = PoseStamped()
             pose.header = path_msg.header
-            pose.pose.position.x = wx
-            pose.pose.position.y = wy
-            pose.pose.position.z = wz
+            pose.pose.position.x = float(wx)
+            pose.pose.position.y = float(wy)
+            pose.pose.position.z = float(wz)
             pose.pose.orientation.w = 1.0
             path_msg.poses.append(pose)
-
+ 
         self.path_pub.publish(path_msg)
         self.last_path = path_msg
-        self.replan_requested = False
+        self.local_stuck = False
+ 
+        self._publish_global_map()
         return True
-
+ 
+    # === Visualization ============================================
+ 
+    def _publish_global_map(self):
+        if self.inflated_map is None:
+            return
+ 
+        msg = OccupancyGrid()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'odom'
+        msg.info.resolution = self.map_resolution
+        msg.info.width  = self.map_width
+        msg.info.height = self.map_height
+        msg.info.origin = Pose()
+        msg.info.origin.position.x = self.map_origin_x
+        msg.info.origin.position.y = self.map_origin_y
+        msg.info.origin.position.z = 0.0
+        msg.info.origin.orientation.w = 1.0
+ 
+        data = (self.inflated_map * 100).astype(np.int8)
+        msg.data = data.flatten().tolist()
+        self.map_viz_pub.publish(msg)
+ 
+    # === Periodic check ===========================================
+ 
+    def periodic_check(self):
+        if self.emergency:
+            return
+        if not self.nav_active:
+            return
+        if self.current_pose is None or self.goal is None:
+            return
+ 
+        now = self.get_clock().now().nanoseconds * 1e-9
+ 
+        if self.last_path is None:
+            self.plan()
+            self.last_plan_time = now
+            return
+ 
+        if self.local_stuck:
+            self.get_logger().info('Replanning due to local planner stuck')
+            self.plan()
+            self.last_plan_time = now
+            return
+ 
+        if (now - self.last_plan_time) > REPLAN_INTERVAL:
+            self.plan()
+            self.last_plan_time = now
+ 
+ 
+def _sign(x):
+    return (x > 0) - (x < 0)
+ 
+ 
 def main():
     rclpy.init()
-    node = AStarPlanner()
+    node = GlobalPlanner()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-
+ 
+ 
 if __name__ == '__main__':
     main()

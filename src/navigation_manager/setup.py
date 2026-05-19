@@ -32,8 +32,9 @@ setup(
         'path_follower = navigation_manager.path_follower:main',
         'safety_layer = navigation_manager.safety_layer:main',
         'waypoint_manager = navigation_manager.waypoint_manager:main',
-        'agpf_planner = navigation_manager.agpf_planner:main',
         'depth_filter = navigation_manager.depth_filter:main',
+        'octomap_manager = navigation_manager.octomap_manager:main',
+        'rrt_local_planner = navigation_manager.rrt_local_planner:main',
     ],
 },
 )

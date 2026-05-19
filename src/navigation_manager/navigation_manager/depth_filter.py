@@ -1,220 +1,220 @@
+#!/usr/bin/env python3
+import math
+import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from sensor_msgs.msg import Image, PointCloud2, PointField
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import Image, PointCloud2, PointField, Imu
 from px4_msgs.msg import VehicleOdometry
 from cv_bridge import CvBridge
-import numpy as np
-import math
-import struct
+
+SPAWN_X   = 1.0
+SPAWN_Y   = 3.0
+MIN_DEPTH = 0.6
+MAX_DEPTH = 6.0
+Z_MIN     = 0.5
+Z_MAX     = 2.7
+SUBSAMPLE = 4
+FX        = 161.4
+FY        = 161.4
+CX        = 160.0
+CY        = 120.0
+
+# IMU gate
+MAX_YAW_RATE         = 0.8
+MAX_VIBRATION        = 5.0
+STABLE_FRAMES_NEEDED = 2
+
+# Point/frame thresholds
+MIN_POINTS_PER_FRAME = 50    # skip frame if fewer valid points
+OBSTACLE_MIN_FRAMES  = 3
+MIN_NEIGHBORS        = 5     # min neighbors within 0.3m radius     # point must appear in N consecutive frames to publish
+
 
 class DepthFilter(Node):
-    # Camera intrinsics
-    CX = 160.0
-    CY = 120.0
-    FX = 161.4
-    FY = 161.4
-    IMG_W = 320
-    IMG_H = 240
-
-    # Camera mount
-    CAM_X = 0.12 + 0.01233
-    CAM_Y = 0.0 + (-0.0375)
-    CAM_Z = 0.06 + 0.01878
-
-    # Filter parameters
-    MIN_DEPTH     = 1.0    # ignore very close points
-    MAX_DEPTH     = 3.5    # ignore far/max range
-    Z_MIN         = 0.8    # cut floor
-    Z_MAX         = 2.7    # cut ceiling
-    VOXEL_SIZE    = 0.15   # bigger voxels = fewer points
-    RADIUS        = 0.25   # bigger radius for outlier check
-    MIN_NEIGHBORS = 5      # stricter — needs 5 neighbors
-    SUBSAMPLE     = 5      # skip more pixels
-
     def __init__(self):
         super().__init__('depth_filter')
+        self.bridge         = CvBridge()
+        self.drone_x        = None
+        self.drone_y        = None
+        self.drone_z        = 0.0
+        self.drone_yaw      = 0.0
+        self.yaw_rate       = 0.0
+        self.vibration      = 0.0
+        self.stable_count   = 0
+        self.mapping_active = True
 
-        qos_reliable = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
+        # Frame consistency buffer: voxel -> consecutive hit count
+        self.voxel_hits     = {}
+        self.VOXEL_RES      = 0.2   # metres — voxel size for consistency check
+
+        qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=5
-        )
+            depth=1)
+
         qos_px4 = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1
-        )
+            depth=1)
 
-        self.bridge = CvBridge()
-        self.drone_x = 0.0
-        self.drone_y = 0.0
-        self.drone_z = 0.0
-        self.drone_yaw = 0.0
-
-        # Yaw rate
-        self.last_yaw = None
-        self.last_yaw_time = None
-        self.yaw_rate = 0.0
-        self.MAX_YAW_RATE = 0.15
-
-        self.odom_sub = self.create_subscription(
-            VehicleOdometry,
-            '/fmu/out/vehicle_odometry',
-            self.odom_callback,
-            qos_px4
-        )
-        self.depth_sub = self.create_subscription(
-            Image,
-            '/oakd/depth/image',
-            self.depth_callback,
-            qos_reliable
-        )
-        self.cloud_pub = self.create_publisher(
-            PointCloud2,
-            '/pointcloud/filtered',
-            10
-        )
-
-        self.get_logger().info('DepthFilter started ✓')
+        self.create_subscription(Image,           '/oakd/depth/image',         self.depth_cb, qos)
+        self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_cb,  qos_px4)
+        # IMU subscription removed — using PX4 odometry angular velocity instead
+        self.pub = self.create_publisher(PointCloud2, '/pointcloud/filtered', 10)
+        self.get_logger().info('DepthFilter + IMU gate + frame consistency started')
 
     def _wrap_angle(self, a):
-        while a > math.pi: a -= 2*math.pi
-        while a < -math.pi: a += 2*math.pi
+        while a >  math.pi: a -= 2 * math.pi
+        while a < -math.pi: a += 2 * math.pi
         return a
 
-    def odom_callback(self, msg):
-        self.drone_x = float(msg.position[1]) + 1.0
-        self.drone_y = float(msg.position[0]) + 3.0
-        self.drone_z = float(msg.position[2])
+
+    def odom_cb(self, msg):
         q = msg.q
         siny = 2.0*(q[0]*q[3] + q[1]*q[2])
         cosy = 1.0 - 2.0*(q[2]*q[2] + q[3]*q[3])
-        self.drone_yaw = self._wrap_angle(
-            math.atan2(siny, cosy) - math.pi/2.0
-        )
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if self.last_yaw is not None and self.last_yaw_time is not None:
-            dt = now - self.last_yaw_time
-            if dt > 0.001:
-                dyaw = self._wrap_angle(self.drone_yaw - self.last_yaw)
-                self.yaw_rate = 0.7*self.yaw_rate + 0.3*(dyaw/dt)
-        self.last_yaw = self.drone_yaw
-        self.last_yaw_time = now
+        self.drone_yaw = self._wrap_angle(math.atan2(siny, cosy) - math.pi / 2.0)
+        self.drone_x   = float(msg.position[1]) + SPAWN_X
+        self.drone_y   = float(msg.position[0]) + SPAWN_Y
+        self.drone_z   = -float(msg.position[2])
+        self.yaw_rate  = abs(float(msg.angular_velocity[2]))
+        ax = float(msg.angular_velocity[0])
+        ay = float(msg.angular_velocity[1])
+        self.vibration = math.sqrt(ax*ax + ay*ay)
 
-    def depth_callback(self, msg):
-        # Yaw gate
-        if abs(self.yaw_rate) > self.MAX_YAW_RATE:
+    def _pt_to_voxel(self, x, y, z):
+        """Snap world point to voxel key."""
+        return (
+            int(x / self.VOXEL_RES),
+            int(y / self.VOXEL_RES),
+            int(z / self.VOXEL_RES)
+        )
+
+    def depth_cb(self, msg):
+        if self.drone_x is None:
             return
+
+        # ── IMU gate ──────────────────────────────────────────────────────────
+        if self.yaw_rate > MAX_YAW_RATE or self.vibration > MAX_VIBRATION:
+            self.stable_count   = 0
+            self.mapping_active = False
+            # Decay all voxel hits when skipping
+            self.voxel_hits = {k: max(0, v-1) for k, v in self.voxel_hits.items()}
+            self.voxel_hits = {k: v for k, v in self.voxel_hits.items() if v > 0}
+            return
+
+        if not self.mapping_active:
+            self.stable_count += 1
+            if self.stable_count < STABLE_FRAMES_NEEDED:
+                return
+            self.mapping_active = True
+            self.get_logger().info('Mapping resumed')
 
         try:
             depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
         except Exception as e:
-            self.get_logger().error(f'Depth error: {e}')
+            self.get_logger().warn(f'depth error: {e}')
             return
 
         h, w = depth.shape
-        cos_y = math.cos(self.drone_yaw)
-        sin_y = math.sin(self.drone_yaw)
-        drone_alt = -self.drone_z
+        rows  = np.arange(0, h, SUBSAMPLE)
+        cols  = np.arange(0, w, SUBSAMPLE)
+        rr, cc = np.meshgrid(rows, cols, indexing='ij')
+        rr = rr.ravel()
+        cc = cc.ravel()
+        d  = depth[rr, cc]
 
-        points = []
+        valid = np.isfinite(d) & (d >= MIN_DEPTH) & (d < MAX_DEPTH)
+        rr, cc, d = rr[valid], cc[valid], d[valid]
 
-        for row in range(0, h, self.SUBSAMPLE):
-            for col in range(0, w, self.SUBSAMPLE):
-                d = float(depth[row, col])
-
-                # PassThrough filter — reject invalid depths
-                if not math.isfinite(d) or d < self.MIN_DEPTH or d >= self.MAX_DEPTH:
-                    continue
-
-                # Camera -> body frame
-                z_cam = d
-                x_cam = (col - self.CX) * d / self.FX
-                y_cam = (row - self.CY) * d / self.FY
-                body_x = z_cam + self.CAM_X
-                body_y = -x_cam + self.CAM_Y
-                body_z = -y_cam + self.CAM_Z
-
-                # Altitude PassThrough filter
-                world_z = drone_alt + body_z
-                if world_z < self.Z_MIN or world_z > self.Z_MAX:
-                    continue
-
-                # Body -> world
-                world_x = self.drone_x + cos_y*body_x - sin_y*body_y
-                world_y = self.drone_y + sin_y*body_x + cos_y*body_y
-
-                points.append([world_x, world_y, world_z])
-
-        if not points:
+        # ── Min points threshold ──────────────────────────────────────────────
+        if len(d) < MIN_POINTS_PER_FRAME:
+            self.get_logger().debug(f'Frame skipped: only {len(d)} points')
             return
 
-        pts = np.array(points, dtype=np.float32)
+        # ── Project to world frame ────────────────────────────────────────────
+        x_cam  = (cc - CX) * d / FX
+        y_cam  = (rr - CY) * d / FY
+        body_x =  d
+        body_y = -x_cam
+        body_z = -y_cam
 
-        # VoxelGrid downsampling
-        pts = self._voxel_grid(pts, self.VOXEL_SIZE)
+        cos_y   = math.cos(self.drone_yaw)
+        sin_y   = math.sin(self.drone_yaw)
+        world_x = self.drone_x + cos_y * body_x - sin_y * body_y
+        world_y = self.drone_y + sin_y * body_x + cos_y * body_y
+        world_z = self.drone_z + body_z
 
-        # RadiusOutlierRemoval
-        pts = self._radius_outlier_removal(pts, self.RADIUS, self.MIN_NEIGHBORS)
-
-        if len(pts) == 0:
+        alt_valid = (world_z >= Z_MIN) & (world_z <= Z_MAX)
+        world_x = world_x[alt_valid]
+        world_y = world_y[alt_valid]
+        world_z = world_z[alt_valid]
+        if len(world_x) == 0:
             return
 
-        self._publish_cloud(pts)
+            return
 
-    def _voxel_grid(self, pts, voxel_size):
-        if len(pts) == 0:
-            return pts
-        voxel_indices = np.floor(pts / voxel_size).astype(np.int32)
-        unique_voxels, inverse = np.unique(
-            voxel_indices, axis=0, return_inverse=True
-        )
-        downsampled = np.zeros(
-            (len(unique_voxels), 3), dtype=np.float32
-        )
-        np.add.at(downsampled, inverse, pts)
-        counts = np.bincount(inverse)
-        downsampled /= counts[:, np.newaxis]
-        return downsampled
+        # ── Frame consistency filter ──────────────────────────────────────────
+        # Increment hit count for voxels seen this frame
+        seen_this_frame = set()
+        for i in range(len(world_x)):
+            vk = self._pt_to_voxel(world_x[i], world_y[i], world_z[i])
+            seen_this_frame.add(vk)
+            self.voxel_hits[vk] = self.voxel_hits.get(vk, 0) + 1
 
-    def _radius_outlier_removal(self, pts, radius, min_neighbors):
-        if len(pts) < min_neighbors + 1:
-            return pts
-        keep = []
-        for i, p in enumerate(pts):
-            dists = np.linalg.norm(pts - p, axis=1)
-            neighbors = np.sum(dists < radius) - 1  # exclude self
-            if neighbors >= min_neighbors:
-                keep.append(i)
-        return pts[keep] if keep else np.array([], dtype=np.float32)
+        # Decay voxels NOT seen this frame
+        for vk in list(self.voxel_hits.keys()):
+            if vk not in seen_this_frame:
+                self.voxel_hits[vk] = max(0, self.voxel_hits[vk] - 1)
+                if self.voxel_hits[vk] == 0:
+                    del self.voxel_hits[vk]
 
-    def _publish_cloud(self, pts):
-        msg = PointCloud2()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
-        msg.height = 1
-        msg.width = len(pts)
-        msg.fields = [
+        # Only keep points whose voxel has been seen >= OBSTACLE_MIN_FRAMES
+        confirmed_mask = np.array([
+            self.voxel_hits.get(
+                self._pt_to_voxel(world_x[i], world_y[i], world_z[i]), 0
+            ) >= OBSTACLE_MIN_FRAMES
+            for i in range(len(world_x))
+        ])
+
+        world_x = world_x[confirmed_mask]
+        world_y = world_y[confirmed_mask]
+        world_z = world_z[confirmed_mask]
+
+        if len(world_x) == 0:
+            return
+
+        pts = np.stack([world_x, world_y, world_z], axis=1).astype(np.float32)
+
+        pc = PointCloud2()
+        pc.header.stamp    = msg.header.stamp
+        pc.header.frame_id = 'odom'
+        pc.height    = 1
+        pc.width     = len(pts)
+        pc.fields    = [
             PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
             PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
         ]
-        msg.is_bigendian = False
-        msg.point_step = 12
-        msg.row_step = 12 * len(pts)
-        msg.is_dense = True
-        msg.data = pts.tobytes()
-        self.cloud_pub.publish(msg)
+        pc.is_bigendian = False
+        pc.point_step   = 12
+        pc.row_step     = 12 * len(pts)
+        pc.is_dense     = True
+        pc.data         = pts.tobytes()
+        self.pub.publish(pc)
+        self.get_logger().debug(f'Published {len(pts)} confirmed pts')
 
-def main():
-    rclpy.init()
+
+def main(args=None):
+    rclpy.init(args=args)
     node = DepthFilter()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

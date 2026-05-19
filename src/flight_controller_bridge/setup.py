@@ -26,7 +26,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'bridge_node = flight_controller_bridge.bridge_node:main',
             'vio_bridge = flight_controller_bridge.vio_bridge:main',
         ],
     },

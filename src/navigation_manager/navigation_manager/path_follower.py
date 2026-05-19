@@ -31,7 +31,7 @@ class PathFollower(Node):
         self.min_vz       = 0.03
 
         # Smoothing
-        self.vel_alpha = 0.12
+        self.vel_alpha = 0.25
         self.filtered_vx = 0.0
         self.filtered_vy = 0.0
         self.filtered_vz = 0.0
@@ -196,7 +196,7 @@ class PathFollower(Node):
             self.get_logger().info(
                 f'Waypoint {self.current_idx}/{len(self.path)} reached'
             )
-
+        
         # Compute XY direction
         dx = target.pose.position.x - self.current_pose.pose.position.x
         dy = target.pose.position.y - self.current_pose.pose.position.y
@@ -228,6 +228,7 @@ class PathFollower(Node):
             vz = math.copysign(vz, dz)
         else:
             vz = 0.0
+     
 
         self.publish_velocity(vx, vy, vz)
 
