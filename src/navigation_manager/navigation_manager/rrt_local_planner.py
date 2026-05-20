@@ -133,7 +133,9 @@ class RRTLocalPlanner(Node):
             self.emergency_cb, 10)
 
         # ── Publishers ───────────────────────────────────────────
-        self.path_pub  = self.create_publisher(Path, '/planned_path', 10)
+        self.path_pub    = self.create_publisher(Path, '/planned_path', 10)
+        self.reached_pub = self.create_publisher(Bool, '/goal_reached', 10)
+        self.goal_reached_sent = False
         self.stuck_pub = self.create_publisher(Bool, '/local_planner_stuck', 10)
         self.debug_pub = self.create_publisher(PointCloud2, '/rrt_debug', 10)
 
@@ -156,6 +158,7 @@ class RRTLocalPlanner(Node):
         if msg.poses:
             self.global_path = msg
             self.stuck_reported = False
+            self.goal_reached_sent = False
             self.get_logger().info(
                 f'Received global path: {len(msg.poses)} waypoints')
 
@@ -554,7 +557,24 @@ class RRTLocalPlanner(Node):
             self.current_pose.pose.position.y,
             self.current_pose.pose.position.z])
 
-        # Check if already at goal
+        # Check if already at final global goal → fire goal_reached
+        final_goal = np.array([
+            self.global_path.poses[-1].pose.position.x,
+            self.global_path.poses[-1].pose.position.y,
+            self.global_path.poses[-1].pose.position.z])
+        dist_to_final = np.linalg.norm(start - final_goal)
+        if dist_to_final < GOAL_TOLERANCE * 2.0:
+            if not self.goal_reached_sent:
+                msg = Bool()
+                msg.data = True
+                self.reached_pub.publish(msg)
+                self.goal_reached_sent = True
+                self.get_logger().info('Goal reached ✓ — publishing goal_reached')
+            return
+        else:
+            self.goal_reached_sent = False
+
+        # Check if already at local goal
         if np.linalg.norm(start - local_goal) < GOAL_TOLERANCE:
             return
 

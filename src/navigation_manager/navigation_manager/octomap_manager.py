@@ -127,6 +127,10 @@ class OctomapManager(Node):
         # ── Last prune time ──────────────────────────────────────────
         self.last_prune_time = 0.0
 
+        # ── Force update state ───────────────────────────────────────
+        self.force_update_active  = False
+        self.force_update_counter = 0
+
         # ── Subscribers ──────────────────────────────────────────────
         self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry',
@@ -137,12 +141,8 @@ class OctomapManager(Node):
             self.force_update_cb, 10)
 
         self.create_subscription(
-            Bool, '/force_update',
-            self.force_update_cb, 10)
-
-        self.create_subscription(
             PointCloud2, '/pointcloud/filtered',
-            self.cloud_cb, qos_reliable)
+            self.cloud_cb, qos_besteffort)
 
         self.create_subscription(
             LaserScan, '/front_lidar/scan',

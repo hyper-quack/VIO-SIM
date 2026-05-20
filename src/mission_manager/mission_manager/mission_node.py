@@ -197,16 +197,11 @@ class MissionManager(Node):
     def navigation_active_callback(self, msg):
         if not msg.data and self.state == self.STATE_FOLLOW_PATH:
             self.nav_inactive_counter += 1
-
             if self.nav_inactive_counter >= 50:   # 50 × 0.02 s = 1 s
                 self.get_logger().info('🎯 Mission complète — atterrissage')
                 self.state = self.STATE_LAND
         else:
             self.nav_inactive_counter = 0
-        self.stuck_counter = 0
-        self.stuck_threshold = 200  # 4s at 50Hz
-        self.recovery_counter = 0
-        self.in_recovery = False
 
     def mtf01_callback(self, msg):
         if msg.ranges:

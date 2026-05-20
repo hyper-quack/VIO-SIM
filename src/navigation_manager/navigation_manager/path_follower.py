@@ -172,19 +172,9 @@ class PathFollower(Node):
 
         if self.current_idx >= len(self.path):
             self.stop()
-            self.publish_goal_reached_once()
-            self.path = []
             return
 
         final_goal = self.path[-1]
-
-        # Check final goal reached in 3D
-        if (self.distance_xy(final_goal) < self.goal_radius and
-                self.distance_z(final_goal) < self.goal_radius_z):
-            self.stop()
-            self.publish_goal_reached_once()
-            self.path = []
-            return
 
         # Advance waypoint index
         target = self.path[self.current_idx]
