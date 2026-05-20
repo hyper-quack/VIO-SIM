@@ -25,7 +25,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 from sensor_msgs.msg import PointCloud2, PointField, LaserScan
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Pose
-from std_msgs.msg import Float32MultiArray, Float32
+from std_msgs.msg import Float32MultiArray, Float32, Bool
 from px4_msgs.msg import VehicleOdometry
 import struct
 
@@ -47,16 +47,16 @@ PRUNE_INTERVAL      = 2.0       # seconds — how often to prune old voxels
 VOXEL_SIZE          = 0.10      # metres per voxel (same as old grid)
 
 # Evidence accumulation
-MARK_INCREMENT      = 8.0      # evidence added per point hit
+MARK_INCREMENT      = 20.0      # evidence added per point hit
 FREE_DECREMENT      = 8.0       # evidence removed per free observation
-CONFIRM_THRESHOLD   = 120.0      # evidence needed to confirm obstacle
+CONFIRM_THRESHOLD   = 60.0      # evidence needed to confirm obstacle
 FREE_THRESHOLD      = 10.0      # evidence below this → remove voxel
 MAX_EVIDENCE        = 200.0     # cap evidence accumulation
 
 # Safety filtering
-SELF_EXCLUSION_RADIUS = 1.2     # metres — ignore points near drone
+SELF_EXCLUSION_RADIUS = 1.5     # metres — ignore points near drone
 MIN_POINTS_PER_FRAME  = 50      # skip frames with too few points
-Z_MIN               = 0.3       # metres — minimum obstacle altitude
+Z_MIN               = 0.8       # metres — minimum obstacle altitude
 Z_MAX               = 3.0       # metres — maximum obstacle altitude
 
 # Costmap output (backward compatibility with A*)
@@ -131,6 +131,14 @@ class OctomapManager(Node):
         self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry',
             self.odom_cb, qos_px4)
+
+        self.create_subscription(
+            Bool, '/force_update',
+            self.force_update_cb, 10)
+
+        self.create_subscription(
+            Bool, '/force_update',
+            self.force_update_cb, 10)
 
         self.create_subscription(
             PointCloud2, '/pointcloud/filtered',
@@ -255,8 +263,24 @@ class OctomapManager(Node):
     # Point cloud integration
     # ═══════════════════════════════════════════════════════════════
 
+    def force_update_cb(self, msg):
+        """Temporarily lower confirm threshold to update map faster when stuck."""
+        if msg.data:
+            self.force_update_active = True
+            self.force_update_counter = 100  # ~10s at 10Hz
+            self.get_logger().warn('Force map update active')
+        else:
+            self.force_update_active = False
+
     def cloud_cb(self, msg):
         """Integrate filtered point cloud into voxel map."""
+        # Decrement force update counter once per frame
+        if self.force_update_active and self.force_update_counter > 0:
+            self.force_update_counter -= 1
+            if self.force_update_counter == 0:
+                self.force_update_active = False
+                self.get_logger().info('Force update complete — normal threshold restored')
+
         if self.drone_x is None:
             return
 
@@ -312,7 +336,9 @@ class OctomapManager(Node):
                 self.voxels[vkey] = VoxelData()
             vd = self.voxels[vkey]
             vd.evidence = min(MAX_EVIDENCE, vd.evidence + mark_inc)
-            if vd.evidence >= CONFIRM_THRESHOLD:
+            # Lower threshold when force update active
+            threshold = CONFIRM_THRESHOLD * 0.4 if self.force_update_active else CONFIRM_THRESHOLD
+            if vd.evidence >= threshold:
                 vd.confirmed = True
 
             # ── Ray casting: free-space clearing ─────────────────

@@ -46,19 +46,19 @@ from scipy.spatial import KDTree
 # ═══════════════════════════════════════════════════════════════════
 
 # RRT* core
-MAX_ITERATIONS      = 300       # samples per planning cycle
+MAX_ITERATIONS      = 600       # samples per planning cycle
 STEP_SIZE           = 0.4       # metres per tree extension
-REWIRE_RADIUS       = 1.2      # metres — rewiring neighborhood
-GOAL_BIAS           = 0.15     # probability of sampling the goal directly
+REWIRE_RADIUS       = 1.5      # metres — rewiring neighborhood
+GOAL_BIAS           = 0.25     # probability of sampling the goal directly
 GOAL_TOLERANCE      = 0.4      # metres — close enough to local goal
 
 # Safety
-MIN_OBSTACLE_DIST   = 0.5      # metres — minimum clearance from obstacles
+MIN_OBSTACLE_DIST   = 0.8      # metres — minimum clearance from obstacles
 EDGE_CHECK_STEP     = 0.1      # metres — collision check resolution along edges
 
 # Local planning window
-LOCAL_GOAL_DIST     = 4.0      # metres — pick global waypoint within this range
-LOCAL_SAMPLE_RADIUS = 5.0      # metres — sample space around drone
+LOCAL_GOAL_DIST     = 100.0      # metres — pick global waypoint within this range
+LOCAL_SAMPLE_RADIUS = 25.0      # metres — sample space around drone
 
 # Altitude
 Z_MIN               = 0.5      # metres — minimum planning altitude
@@ -255,15 +255,32 @@ class RRTLocalPlanner(Node):
     # ═══════════════════════════════════════════════════════════════
 
     def sample_point(self, start, goal):
-        """Sample a random point in the local planning space."""
+        """Sample biased toward the goal corridor."""
         if random.random() < GOAL_BIAS:
             return goal.copy()
 
-        # Sample in sphere around drone
-        angle_xy = random.uniform(0, 2 * math.pi)
-        radius   = random.uniform(0, LOCAL_SAMPLE_RADIUS)
-        x = start[0] + radius * math.cos(angle_xy)
-        y = start[1] + radius * math.sin(angle_xy)
+        # Direction from start to goal
+        direction = goal - start
+        total_dist = np.linalg.norm(direction)
+
+        if total_dist < 0.001:
+            return goal.copy()
+
+        direction_norm = direction / total_dist
+
+        # Sample along the corridor between start and goal
+        # t in [0, 1] = position along the start→goal axis
+        t = random.uniform(0.0, 1.0)
+        along = start + direction_norm * (t * total_dist)
+
+        # Add lateral noise perpendicular to goal direction
+        lateral_range = min(3.0, total_dist * 0.3)
+        perp_x = -direction_norm[1]
+        perp_y =  direction_norm[0]
+        lateral = random.uniform(-lateral_range, lateral_range)
+
+        x = along[0] + perp_x * lateral
+        y = along[1] + perp_y * lateral
 
         # Z: sample around target altitude
         target_z = goal[2]
@@ -273,15 +290,12 @@ class RRTLocalPlanner(Node):
         return np.array([x, y, z])
 
     def nearest_node(self, tree, point):
-        """Find nearest node in tree to point."""
-        best_node = None
-        best_dist = float('inf')
-        for node in tree:
-            dist = np.linalg.norm(node.pos - point)
-            if dist < best_dist:
-                best_dist = dist
-                best_node = node
-        return best_node
+        """Find nearest node in tree to point using fast numpy ops."""
+        if not tree:
+            return None
+        positions = np.array([n.pos for n in tree])
+        dists = np.linalg.norm(positions - point, axis=1)
+        return tree[int(np.argmin(dists))]
 
     def steer(self, from_pos, to_pos):
         """Extend from from_pos toward to_pos by STEP_SIZE."""
@@ -297,19 +311,35 @@ class RRTLocalPlanner(Node):
                 if np.linalg.norm(n.pos - point) <= REWIRE_RADIUS]
 
     def rrt_star(self, start_pos, goal_pos):
-        """Run RRT* and return path if found."""
-        root = RRTNode(start_pos)
-        tree = [root]
+        """Bidirectional RRT* — two trees grow from start and goal and meet."""
+        # Tree A grows from start, Tree B grows from goal
+        root_a = RRTNode(start_pos, cost=0.0)
+        root_b = RRTNode(goal_pos,  cost=0.0)
+        tree_a = [root_a]
+        tree_b = [root_b]
 
-        best_goal_node = None
-        best_goal_cost = float('inf')
+        best_path      = None
+        best_path_cost = float('inf')
+        connect_pair   = None   # (node_in_a, node_in_b)
 
         for iteration in range(MAX_ITERATIONS):
-            # 1. Sample
-            rand_point = self.sample_point(start_pos, goal_pos)
+            # Alternate which tree we extend
+            if iteration % 2 == 0:
+                active_tree  = tree_a
+                passive_tree = tree_b
+                sample_start = start_pos
+                sample_goal  = goal_pos
+            else:
+                active_tree  = tree_b
+                passive_tree = tree_a
+                sample_start = goal_pos
+                sample_goal  = start_pos
 
-            # 2. Find nearest
-            nearest = self.nearest_node(tree, rand_point)
+            # 1. Sample biased toward the other tree's root
+            rand_point = self.sample_point(sample_start, sample_goal)
+
+            # 2. Find nearest in active tree
+            nearest = self.nearest_node(active_tree, rand_point)
 
             # 3. Steer
             new_pos = self.steer(nearest.pos, rand_point)
@@ -320,55 +350,76 @@ class RRTLocalPlanner(Node):
             if not self.is_edge_safe(nearest.pos, new_pos):
                 continue
 
-            # 5. Find best parent (RRT* rewiring)
-            new_cost = nearest.cost + np.linalg.norm(new_pos - nearest.pos)
+            # 5. Find best parent with rewiring
+            new_cost   = nearest.cost + np.linalg.norm(new_pos - nearest.pos)
             best_parent = nearest
+            neighbors  = self.near_nodes(active_tree, new_pos)
 
-            neighbors = self.near_nodes(tree, new_pos)
             for neighbor in neighbors:
                 candidate_cost = neighbor.cost + np.linalg.norm(new_pos - neighbor.pos)
                 if candidate_cost < new_cost:
                     if self.is_edge_safe(neighbor.pos, new_pos):
                         best_parent = neighbor
-                        new_cost = candidate_cost
+                        new_cost    = candidate_cost
 
-            # 6. Add node
+            # 6. Add node to active tree
             new_node = RRTNode(new_pos, parent=best_parent, cost=new_cost)
             best_parent.children.append(new_node)
-            tree.append(new_node)
+            active_tree.append(new_node)
 
-            # 7. Rewire neighbors
+            # 7. Rewire
             for neighbor in neighbors:
                 if neighbor == best_parent:
                     continue
                 rewire_cost = new_cost + np.linalg.norm(neighbor.pos - new_pos)
                 if rewire_cost < neighbor.cost:
                     if self.is_edge_safe(new_pos, neighbor.pos):
-                        # Remove from old parent
                         if neighbor.parent is not None:
                             try:
                                 neighbor.parent.children.remove(neighbor)
                             except ValueError:
                                 pass
                         neighbor.parent = new_node
-                        neighbor.cost = rewire_cost
+                        neighbor.cost   = rewire_cost
                         new_node.children.append(neighbor)
 
-            # 8. Check if goal reached
-            dist_to_goal = np.linalg.norm(new_pos - goal_pos)
-            if dist_to_goal < GOAL_TOLERANCE and new_cost < best_goal_cost:
-                best_goal_node = new_node
-                best_goal_cost = new_cost
+            # 8. Try to connect to nearest node in passive tree
+            nearest_passive = self.nearest_node(passive_tree, new_pos)
+            connect_dist    = np.linalg.norm(new_pos - nearest_passive.pos)
 
-        # Extract path
-        if best_goal_node is not None:
-            path = self._extract_path(best_goal_node)
-            return path, tree
+            if connect_dist < GOAL_TOLERANCE * 3.0:
+                if self.is_edge_safe(new_pos, nearest_passive.pos):
+                    # Connection found — compute total cost
+                    bridge_cost  = np.linalg.norm(new_pos - nearest_passive.pos)
+                    total_cost   = new_node.cost + bridge_cost + nearest_passive.cost
 
-        return None, tree
+                    if total_cost < best_path_cost:
+                        best_path_cost = total_cost
+                        if iteration % 2 == 0:
+                            connect_pair = (new_node, nearest_passive)
+                        else:
+                            connect_pair = (nearest_passive, new_node)
+
+        # Extract path by combining both trees
+        all_nodes = tree_a + tree_b
+        if connect_pair is not None:
+            node_a, node_b = connect_pair
+            path_a = self._extract_path(node_a)          # start → meeting point
+            path_b = self._extract_path(node_b)          # goal  → meeting point
+            path_b.reverse()                              # meeting point → goal
+            path = path_a + path_b
+            return path, all_nodes
+
+        # Fallback: check if any node in tree_a is close to goal
+        for node in tree_a:
+            if np.linalg.norm(node.pos - goal_pos) < GOAL_TOLERANCE:
+                path = self._extract_path(node)
+                return path, all_nodes
+
+        return None, all_nodes
 
     def _extract_path(self, goal_node):
-        """Trace back from goal node to root."""
+        """Trace back from a node to its tree root."""
         path = []
         node = goal_node
         while node is not None:

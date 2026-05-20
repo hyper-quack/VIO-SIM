@@ -510,13 +510,22 @@ class MissionManager(Node):
 
                 if self.in_recovery:
                     self.recovery_counter += 1
-                    if self.recovery_counter < 50:
-                        self.publish_velocity(-0.1, 0.0, 0.0, self.last_cmd_yaw)
-                    elif self.recovery_counter < 100:
-                        self.publish_velocity(0.0, 0.0, -0.1, self.last_cmd_yaw)
-                    else:
+                    if self.recovery_counter == 1:
+                        # Trigger force map update
+                        fu = Bool()
+                        fu.data = True
+                        self.force_update_pub.publish(fu)
+                        self.get_logger().warn('STUCK — forcing map update')
+                    # Hover in place while map updates
+                    self.publish_velocity(0.0, 0.0, 0.0, self.last_cmd_yaw)
+                    if self.recovery_counter >= 100:
+                        # Stop force update
+                        fu = Bool()
+                        fu.data = False
+                        self.force_update_pub.publish(fu)
                         self.in_recovery = False
                         self.stuck_counter = 0
+                        self.get_logger().info('Recovery complete — resuming')
                     self.get_logger().warn(
                         f'Recovery {self.recovery_counter}/100',
                         throttle_duration_sec=1.0)
