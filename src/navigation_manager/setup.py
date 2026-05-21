@@ -26,15 +26,15 @@ setup(
     description='Navigation manager for CSKy drone',
     license='MIT',
     entry_points={
-    'console_scripts': [
-        'a_star_planner = navigation_manager.a_star_planner:main',
-        'obstacle_detector = navigation_manager.obstacle_detector:main',
-        'path_follower = navigation_manager.path_follower:main',
-        'safety_layer = navigation_manager.safety_layer:main',
-        'waypoint_manager = navigation_manager.waypoint_manager:main',
-        'depth_filter = navigation_manager.depth_filter:main',
-        'octomap_manager = navigation_manager.octomap_manager:main',
-        'rrt_local_planner = navigation_manager.rrt_local_planner:main',
-    ],
-},
+        'console_scripts': [
+            'a_star_planner   = navigation_manager.a_star_planner:main',
+            'path_follower    = navigation_manager.path_follower:main',
+            'safety_layer     = navigation_manager.safety_layer:main',
+            'waypoint_manager = navigation_manager.waypoint_manager:main',
+            'octomap_manager  = navigation_manager.octomap_manager:main',
+            'slam_frontend    = navigation_manager.slam_frontend:main',
+            'depth_filter     = navigation_manager.depth_filter:main',
+            'loop_closure     = navigation_manager.loop_closure:main',
+        ],
+    },
 )

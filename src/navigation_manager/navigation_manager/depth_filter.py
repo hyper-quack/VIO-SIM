@@ -1,219 +1,265 @@
 #!/usr/bin/env python3
+"""
+depth_filter.py — Simple depth image to point cloud
+
+Subscribes:
+  /oakd/depth/image            → raw depth (32FC1, metres)
+  /fmu/out/vehicle_odometry    → drone pose (PX4 NED)
+  /mtf01/lidar                 → altitude (Z source)
+  /imu/filtered                → yaw rate (IMU gate)
+
+Publishes:
+  /pointcloud/filtered         → PointCloud2 in world frame (odom)
+
+Coordinate convention (same as all other nodes):
+  world_x = px4_position[1] + SPAWN_X   (PX4 East  → World X)
+  world_y = px4_position[0] + SPAWN_Y   (PX4 North → World Y)
+  world_z = lidar_z                      (MTF-01 altitude)
+  yaw     = atan2(siny,cosy) - pi/2     (GPS mode)
+"""
+
 import math
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image, PointCloud2, PointField, Imu
+from sensor_msgs.msg import Image, PointCloud2, PointField, Imu, LaserScan
 from px4_msgs.msg import VehicleOdometry
 from cv_bridge import CvBridge
 
-SPAWN_X   = 1.0
-SPAWN_Y   = 3.0
-MIN_DEPTH = 0.6
-MAX_DEPTH = 6.0
-Z_MIN     = 0.5
-Z_MAX     = 2.7
-SUBSAMPLE = 4
-FX        = 161.4
-FY        = 161.4
-CX        = 160.0
-CY        = 120.0
+# ── Camera intrinsics (OAK-D depth at 640×480, but we subsample) ─────────────
+# CORRECT — 320×240
+FX = 161.4
+FY = 161.4
+CX = 160.0
+CY = 120.0
 
-# IMU gate
-MAX_YAW_RATE         = 0.8
-MAX_VIBRATION        = 5.0
-STABLE_FRAMES_NEEDED = 2
+# ── Depth limits ──────────────────────────────────────────────────────────────
+MIN_DEPTH = 0.6       # metres — exclude drone body
+MAX_DEPTH = 6.0       # metres — exclude open-space noise
 
-# Point/frame thresholds
-MIN_POINTS_PER_FRAME = 50    # skip frame if fewer valid points
-OBSTACLE_MIN_FRAMES  = 3
-MIN_NEIGHBORS        = 5     # min neighbors within 0.3m radius     # point must appear in N consecutive frames to publish
+# ── Altitude filter (world Z) ─────────────────────────────────────────────────
+Z_MIN = 1.0           # metres — floor filter
+Z_MAX = 2.8           # metres — ceiling filter
+
+# ── Self exclusion ────────────────────────────────────────────────────────────
+SELF_EXCLUSION_RADIUS = 0.8   # metres — ignore points near drone center
+
+# ── Subsampling ───────────────────────────────────────────────────────────────
+SUBSAMPLE = 4         # process every Nth pixel row and column
+
+# ── IMU gate ──────────────────────────────────────────────────────────────────
+MAX_YAW_RATE = 0.5    # rad/s — skip frame if rotating faster
+
+# ── World frame spawn offsets ─────────────────────────────────────────────────
+SPAWN_X = 1.0
+SPAWN_Y = 3.0
+
+
+def _wrap_angle(a: float) -> float:
+    while a >  math.pi: a -= 2.0 * math.pi
+    while a < -math.pi: a += 2.0 * math.pi
+    return a
 
 
 class DepthFilter(Node):
+
     def __init__(self):
         super().__init__('depth_filter')
-        self.bridge         = CvBridge()
-        self.drone_x        = None
-        self.drone_y        = None
-        self.drone_z        = 0.0
-        self.drone_yaw      = 0.0
-        self.yaw_rate       = 0.0
-        self.vibration      = 0.0
-        self.stable_count   = 0
-        self.mapping_active = True
 
-        # Frame consistency buffer: voxel -> consecutive hit count
-        self.voxel_hits     = {}
-        self.VOXEL_RES      = 0.2   # metres — voxel size for consistency check
-
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1)
-
+        # ── QoS profiles ──────────────────────────────────────────────────────
         qos_px4 = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1)
 
-        self.create_subscription(Image,           '/oakd/depth/image',         self.depth_cb, qos)
-        self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_cb,  qos_px4)
-        # IMU subscription removed — using PX4 odometry angular velocity instead
+        qos_best = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1)
+
+        # ── Subscribers ───────────────────────────────────────────────────────
+        self.create_subscription(
+            Image, '/oakd/depth/image',
+            self._depth_cb, qos_best)
+
+        self.create_subscription(
+            VehicleOdometry, '/fmu/out/vehicle_odometry',
+            self._odom_cb, qos_px4)
+
+        self.create_subscription(
+            LaserScan, '/mtf01/lidar',
+            self._mtf01_cb, 10)
+
+        self.create_subscription(
+            Imu, '/imu/filtered',
+            self._imu_cb, qos_best)
+
+        # ── Publisher ─────────────────────────────────────────────────────────
         self.pub = self.create_publisher(PointCloud2, '/pointcloud/filtered', 10)
-        self.get_logger().info('DepthFilter + IMU gate + frame consistency started')
 
-    def _wrap_angle(self, a):
-        while a >  math.pi: a -= 2 * math.pi
-        while a < -math.pi: a += 2 * math.pi
-        return a
+        # ── State ─────────────────────────────────────────────────────────────
+        self.drone_x   = None
+        self.drone_y   = None
+        self.drone_z   = 0.0
+        self.drone_yaw = 0.0
+        self.lidar_z   = 0.0
+        self.yaw_rate  = 0.0
+        self.bridge    = CvBridge()
 
+        self.get_logger().info('DepthFilter started ✓')
 
-    def odom_cb(self, msg):
-        q = msg.q
-        siny = 2.0*(q[0]*q[3] + q[1]*q[2])
-        cosy = 1.0 - 2.0*(q[2]*q[2] + q[3]*q[3])
-        self.drone_yaw = self._wrap_angle(math.atan2(siny, cosy) - math.pi / 2.0)
-        self.drone_x   = float(msg.position[1]) + SPAWN_X
-        self.drone_y   = float(msg.position[0]) + SPAWN_Y
-        self.drone_z   = -float(msg.position[2])
-        self.yaw_rate  = abs(float(msg.angular_velocity[2]))
-        ax = float(msg.angular_velocity[0])
-        ay = float(msg.angular_velocity[1])
-        self.vibration = math.sqrt(ax*ax + ay*ay)
+    # ═════════════════════════════════════════════════════════════════════════
+    # Callbacks
+    # ═════════════════════════════════════════════════════════════════════════
 
-    def _pt_to_voxel(self, x, y, z):
-        """Snap world point to voxel key."""
-        return (
-            int(x / self.VOXEL_RES),
-            int(y / self.VOXEL_RES),
-            int(z / self.VOXEL_RES)
-        )
+    def _odom_cb(self, msg: VehicleOdometry):
+        """PX4 NED → world frame."""
+        self.drone_x = float(msg.position[1]) + SPAWN_X
+        self.drone_y = float(msg.position[0]) + SPAWN_Y
+        self.drone_z = -float(msg.position[2])
 
-    def depth_cb(self, msg):
+        q = msg.q  # [w, x, y, z]
+        siny = 2.0 * (q[0] * q[3] + q[1] * q[2])
+        cosy = 1.0 - 2.0 * (q[2] ** 2 + q[3] ** 2)
+        self.drone_yaw = _wrap_angle(math.atan2(siny, cosy) - math.pi / 2.0)
+
+    def _mtf01_cb(self, msg: LaserScan):
+        """MTF-01 downward LiDAR — altitude above ground."""
+        if msg.ranges and math.isfinite(msg.ranges[0]) and msg.ranges[0] > 0.01:
+            self.lidar_z = float(msg.ranges[0])
+
+    def _imu_cb(self, msg: Imu):
+        """Extract yaw rate for IMU gate."""
+        self.yaw_rate = abs(float(msg.angular_velocity.z))
+
+    def _depth_cb(self, msg: Image):
+        """
+        Main processing:
+        1. IMU gate — skip if rotating too fast
+        2. Convert depth image to numpy
+        3. Subsample pixels
+        4. Filter by depth range
+        5. Project to world frame
+        6. Filter by altitude band
+        7. Remove points too close to drone
+        8. Publish PointCloud2
+        """
         if self.drone_x is None:
             return
 
-        # ── IMU gate ──────────────────────────────────────────────────────────
-        if self.yaw_rate > MAX_YAW_RATE or self.vibration > MAX_VIBRATION:
-            self.stable_count   = 0
-            self.mapping_active = False
-            # Decay all voxel hits when skipping
-            self.voxel_hits = {k: max(0, v-1) for k, v in self.voxel_hits.items()}
-            self.voxel_hits = {k: v for k, v in self.voxel_hits.items() if v > 0}
+        # IMU gate
+        if self.yaw_rate > MAX_YAW_RATE:
+            self.get_logger().debug(
+                f'IMU gate: yaw_rate={self.yaw_rate:.2f} rad/s — skipping')
             return
 
-        if not self.mapping_active:
-            self.stable_count += 1
-            if self.stable_count < STABLE_FRAMES_NEEDED:
-                return
-            self.mapping_active = True
-            self.get_logger().info('Mapping resumed')
-
+        # Convert depth image
         try:
             depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
         except Exception as e:
-            self.get_logger().warn(f'depth error: {e}')
+            self.get_logger().warn(f'depth conversion error: {e}')
             return
 
         h, w = depth.shape
-        rows  = np.arange(0, h, SUBSAMPLE)
-        cols  = np.arange(0, w, SUBSAMPLE)
+
+        # Subsample pixel grid
+        rows = np.arange(0, h, SUBSAMPLE)
+        cols = np.arange(0, w, SUBSAMPLE)
         rr, cc = np.meshgrid(rows, cols, indexing='ij')
         rr = rr.ravel()
         cc = cc.ravel()
         d  = depth[rr, cc]
 
-        valid = np.isfinite(d) & (d >= MIN_DEPTH) & (d < MAX_DEPTH)
-        rr, cc, d = rr[valid], cc[valid], d[valid]
+        # Depth validity filter
+        valid = np.isfinite(d) & (d >= MIN_DEPTH) & (d <= MAX_DEPTH)
+        rr = rr[valid]
+        cc = cc[valid]
+        d  = d[valid]
 
-        # ── Min points threshold ──────────────────────────────────────────────
-        if len(d) < MIN_POINTS_PER_FRAME:
-            self.get_logger().debug(f'Frame skipped: only {len(d)} points')
+        if len(d) == 0:
             return
 
-        # ── Project to world frame ────────────────────────────────────────────
-        x_cam  = (cc - CX) * d / FX
-        y_cam  = (rr - CY) * d / FY
-        body_x =  d
-        body_y = -x_cam
-        body_z = -y_cam
+        # ── Camera → body → world projection ─────────────────────────────────
+        # Camera frame
+        x_cam =  (cc - CX) * d / FX
+        y_cam =  (rr - CY) * d / FY
+        z_cam =  d
 
-        cos_y   = math.cos(self.drone_yaw)
-        sin_y   = math.sin(self.drone_yaw)
+        # Body frame (OAK-D faces forward along drone nose)
+        body_x =  z_cam    # forward
+        body_y = -x_cam    # left
+        body_z = -y_cam    # up
+
+        # World frame (rotate by drone yaw, translate by drone position)
+        cos_y = math.cos(self.drone_yaw)
+        sin_y = math.sin(self.drone_yaw)
+
         world_x = self.drone_x + cos_y * body_x - sin_y * body_y
         world_y = self.drone_y + sin_y * body_x + cos_y * body_y
-        world_z = self.drone_z + body_z
+        world_z = self.lidar_z + body_z   # use LiDAR altitude as Z base
 
-        alt_valid = (world_z >= Z_MIN) & (world_z <= Z_MAX)
-        world_x = world_x[alt_valid]
-        world_y = world_y[alt_valid]
-        world_z = world_z[alt_valid]
-        if len(world_x) == 0:
-            return
-
-            return
-
-        # ── Frame consistency filter ──────────────────────────────────────────
-        # Increment hit count for voxels seen this frame
-        seen_this_frame = set()
-        for i in range(len(world_x)):
-            vk = self._pt_to_voxel(world_x[i], world_y[i], world_z[i])
-            seen_this_frame.add(vk)
-            self.voxel_hits[vk] = self.voxel_hits.get(vk, 0) + 1
-
-        # Decay voxels NOT seen this frame
-        for vk in list(self.voxel_hits.keys()):
-            if vk not in seen_this_frame:
-                self.voxel_hits[vk] = max(0, self.voxel_hits[vk] - 1)
-                if self.voxel_hits[vk] == 0:
-                    del self.voxel_hits[vk]
-
-        # Only keep points whose voxel has been seen >= OBSTACLE_MIN_FRAMES
-        confirmed_mask = np.array([
-            self.voxel_hits.get(
-                self._pt_to_voxel(world_x[i], world_y[i], world_z[i]), 0
-            ) >= OBSTACLE_MIN_FRAMES
-            for i in range(len(world_x))
-        ])
-
-        world_x = world_x[confirmed_mask]
-        world_y = world_y[confirmed_mask]
-        world_z = world_z[confirmed_mask]
+        # Altitude filter
+        alt_ok  = (world_z >= Z_MIN) & (world_z <= Z_MAX)
+        world_x = world_x[alt_ok]
+        world_y = world_y[alt_ok]
+        world_z = world_z[alt_ok]
 
         if len(world_x) == 0:
             return
 
-        pts = np.stack([world_x, world_y, world_z], axis=1).astype(np.float32)
+        # Self exclusion — remove points too close to drone center
+        dist_2d = np.sqrt(
+            (world_x - self.drone_x) ** 2 +
+            (world_y - self.drone_y) ** 2)
+        far_enough = dist_2d > SELF_EXCLUSION_RADIUS
+        world_x = world_x[far_enough]
+        world_y = world_y[far_enough]
+        world_z = world_z[far_enough]
 
-        pc = PointCloud2()
-        pc.header.stamp    = msg.header.stamp
-        pc.header.frame_id = 'odom'
-        pc.height    = 1
-        pc.width     = len(pts)
-        pc.fields    = [
+        if len(world_x) == 0:
+            return
+
+        # ── Build and publish PointCloud2 ─────────────────────────────────────
+        pts = np.stack(
+            [world_x, world_y, world_z], axis=1).astype(np.float32)
+
+        pc_msg = PointCloud2()
+        pc_msg.header.stamp    = msg.header.stamp
+        pc_msg.header.frame_id = 'odom'
+        pc_msg.height    = 1
+        pc_msg.width     = len(pts)
+        pc_msg.fields    = [
             PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
             PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
         ]
-        pc.is_bigendian = False
-        pc.point_step   = 12
-        pc.row_step     = 12 * len(pts)
-        pc.is_dense     = True
-        pc.data         = pts.tobytes()
-        self.pub.publish(pc)
-        self.get_logger().debug(f'Published {len(pts)} confirmed pts')
+        pc_msg.is_bigendian = False
+        pc_msg.point_step   = 12
+        pc_msg.row_step     = 12 * len(pts)
+        pc_msg.is_dense     = True
+        pc_msg.data         = pts.tobytes()
+        self.pub.publish(pc_msg)
+
+        self.get_logger().debug(f'Published {len(pts)} points')
+        self.get_logger().info(
+            f'depth→cloud: {len(pts)} pts  '
+            f'drone=({self.drone_x:.2f},{self.drone_y:.2f},{self.lidar_z:.2f})',
+            throttle_duration_sec=3.0)
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = DepthFilter()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

@@ -31,6 +31,9 @@ kill_proc "path_follower"
 kill_proc "a_star_planner"
 kill_proc "safety_layer"
 kill_proc "obstacle_detector"
+pkill -9 px4
+pkill -9 gz
+pkill -9 ruby
 
 # ── Step 3: vio_bridge (stops sending odometry to PX4) ───────────────────────
 kill_proc "vio_bridge"
