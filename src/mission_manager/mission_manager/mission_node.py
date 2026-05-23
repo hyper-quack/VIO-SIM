@@ -72,6 +72,9 @@ class MissionManager(Node):
         self.map_reset_pub = self.create_publisher(
             Bool, '/map_reset', 10)
 
+        self.force_update_pub = self.create_publisher(
+            Bool, '/force_update', 10)
+
         self.goal_pub = self.create_publisher(
             PoseStamped, '/goal_pose', 10)
 

@@ -24,7 +24,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import PointCloud2, PointField, LaserScan
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, PoseStamped
 from std_msgs.msg import Float32MultiArray, Float32, Bool
 from px4_msgs.msg import VehicleOdometry
 import struct
@@ -47,9 +47,9 @@ PRUNE_INTERVAL      = 2.0       # seconds — how often to prune old voxels
 VOXEL_SIZE          = 0.10      # metres per voxel (same as old grid)
 
 # Evidence accumulation
-MARK_INCREMENT      = 20.0      # evidence added per point hit
-FREE_DECREMENT      = 8.0       # evidence removed per free observation
-CONFIRM_THRESHOLD   = 60.0      # evidence needed to confirm obstacle
+MARK_INCREMENT      = 8.0      # evidence added per point hit
+FREE_DECREMENT      = 15.0       # evidence removed per free observation
+CONFIRM_THRESHOLD   = 120.0      # evidence needed to confirm obstacle
 FREE_THRESHOLD      = 10.0      # evidence below this → remove voxel
 MAX_EVIDENCE        = 200.0     # cap evidence accumulation
 
@@ -115,6 +115,7 @@ class OctomapManager(Node):
 
         # ── Trust weight (RL filter will set this later) ─────────────
         self.trust_weight = 1.0     # 1.0 = full trust, 0.0 = skip
+        self.slam_pose_available = False  # True when corrected pose arrives
 
         # ── Safety distances ─────────────────────────────────────────
         self.front_dist       = float('inf')
@@ -160,6 +161,11 @@ class OctomapManager(Node):
         self.create_subscription(
             Float32, '/depth_trust_weight',
             self.trust_cb, 10)
+
+        # SLAM corrected pose (replaces PX4 for mapping when available)
+        self.create_subscription(
+            PoseStamped, '/slam/corrected_pose',
+            self.slam_pose_cb, qos_reliable)
 
         # ── Publishers ───────────────────────────────────────────────
         self.costmap_pub   = self.create_publisher(OccupancyGrid, '/costmap', 10)
@@ -232,7 +238,9 @@ class OctomapManager(Node):
     # ═══════════════════════════════════════════════════════════════
 
     def odom_cb(self, msg):
-        """PX4 NED → World frame."""
+        """PX4 NED → World frame — only used if SLAM not available."""
+        if self.slam_pose_available:
+            return
         self.drone_x = float(msg.position[1]) + SPAWN_X
         self.drone_y = float(msg.position[0]) + SPAWN_Y
         self.drone_z = -float(msg.position[2])
@@ -246,6 +254,16 @@ class OctomapManager(Node):
     def trust_cb(self, msg):
         """Receive trust weight from RL depth filter."""
         self.trust_weight = max(0.0, min(1.0, float(msg.data)))
+
+    def slam_pose_cb(self, msg):
+        """Use SLAM corrected pose for mapping instead of raw PX4."""
+        self.drone_x = float(msg.pose.position.x)
+        self.drone_y = float(msg.pose.position.y)
+        self.drone_z = float(msg.pose.position.z)
+        qz = float(msg.pose.orientation.z)
+        qw = float(msg.pose.orientation.w)
+        self.drone_yaw = self._wrap_angle(2.0 * math.atan2(qz, qw))
+        self.slam_pose_available = True
 
     def front_cb(self, msg):
         r = [x for x in msg.ranges if math.isfinite(x) and x > 0.05]

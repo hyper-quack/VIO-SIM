@@ -47,6 +47,18 @@ def generate_launch_description():
         name='depth_filter',
         output='screen',
     )
+    rl_depth_filter = Node(
+        package='navigation_manager',
+        executable='rl_depth_filter',
+        name='rl_depth_filter',
+        output='screen',
+    )
+    pose_graph = Node(
+        package='navigation_manager',
+        executable='pose_graph',
+        name='pose_graph',
+        output='screen',
+    )
     loop_closure = Node(
         package='navigation_manager',
         executable='loop_closure',
@@ -69,6 +81,8 @@ def generate_launch_description():
                 slam_frontend,
                 depth_filter,
                 loop_closure,
+                pose_graph,
+                rl_depth_filter,
             ],
         ),
 

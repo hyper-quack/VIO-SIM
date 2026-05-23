@@ -35,6 +35,8 @@ setup(
             'slam_frontend    = navigation_manager.slam_frontend:main',
             'depth_filter     = navigation_manager.depth_filter:main',
             'loop_closure     = navigation_manager.loop_closure:main',
+            'pose_graph       = navigation_manager.pose_graph:main',
+            'rl_depth_filter  = navigation_manager.rl_depth_filter:main',
         ],
     },
 )

@@ -42,6 +42,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Path, OccupancyGrid
+from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import Bool
 import cv2
@@ -105,7 +106,9 @@ class GlobalPlanner(Node):
         self.create_subscription(Bool, '/emergency_stop', self.emergency_cb, 10)
         self.create_subscription(Bool, '/local_planner_stuck', self.stuck_cb, 10)
  
-        self.path_pub    = self.create_publisher(Path, '/global_path', 10)
+        self.create_subscription(OccupancyGrid, '/costmap', self.costmap_cb, 10)
+
+        self.path_pub    = self.create_publisher(Path, '/planned_path', 10)
         self.map_viz_pub = self.create_publisher(OccupancyGrid, '/global_costmap', 10)
  
         self.create_timer(1.0 / PUBLISH_RATE, self.periodic_check)
@@ -241,6 +244,23 @@ class GlobalPlanner(Node):
             self.local_stuck = True
             self.get_logger().warn('Local planner stuck — will replan globally')
  
+    def costmap_cb(self, msg):
+        """Receive live costmap from octomap_manager."""
+        h = msg.info.height
+        w = msg.info.width
+        data = np.array(msg.data, dtype=np.int8).reshape(h, w)
+        # Mark occupied cells (value > 50)
+        occupied = (data > 50).astype(np.uint8)
+        self.live_costmap = {
+            'grid':     occupied,
+            'origin_x': msg.info.origin.position.x,
+            'origin_y': msg.info.origin.position.y,
+            'res':      msg.info.resolution,
+            'width':    w,
+            'height':   h,
+        }
+        self.costmap_updated = True  # throttled in periodic_check
+
     # === Coordinate transforms ===================================
  
     def _world_to_grid(self, wx, wy):
@@ -260,7 +280,28 @@ class GlobalPlanner(Node):
     def is_free(self, gx, gy):
         if not (0 <= gx < self.map_width and 0 <= gy < self.map_height):
             return False
-        return self.inflated_map[gy, gx] == 0
+        if self.inflated_map[gy, gx] != 0:
+            return False
+        # Also check live costmap from octomap
+        if self.live_costmap is not None:
+            wx, wy = self._grid_to_world(gx, gy)
+            cm = self.live_costmap
+            # Check a small region around the world point (inflation)
+            check_radius = 2  # cells in costmap resolution
+            blocked = False
+            for ddx in range(-check_radius, check_radius+1):
+                for ddy in range(-check_radius, check_radius+1):
+                    cx = int((wx - cm['origin_x']) / cm['res']) + ddx
+                    cy = int((wy - cm['origin_y']) / cm['res']) + ddy
+                    if 0 <= cx < cm['width'] and 0 <= cy < cm['height']:
+                        if cm['grid'][cy, cx] != 0:
+                            blocked = True
+                            break
+                if blocked:
+                    break
+            if blocked:
+                return False
+        return True
  
     @staticmethod
     def heuristic(a, b):
@@ -513,6 +554,12 @@ class GlobalPlanner(Node):
             self.last_plan_time = now
             return
  
+        if self.costmap_updated and (now - self.last_plan_time) > REPLAN_INTERVAL:
+            self.costmap_updated = False
+            self.plan()
+            self.last_plan_time = now
+            return
+
         if (now - self.last_plan_time) > REPLAN_INTERVAL:
             self.plan()
             self.last_plan_time = now

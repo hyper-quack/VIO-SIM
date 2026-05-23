@@ -60,6 +60,14 @@ BASELINE             = 0.075  # metres — OAK-D stereo baseline
 MIN_STEREO_DEPTH     = 0.3    # metres
 MAX_STEREO_DEPTH     = 8.0    # metres
 
+# ── SGBM disparity ────────────────────────────────────────────────────────────
+SGBM_NUM_DISPARITIES = 64
+SGBM_BLOCK_SIZE      = 7
+SGBM_MIN_DISPARITY   = 0
+SGBM_UNIQUENESS      = 10
+SGBM_SPECKLE_WINDOW  = 100
+SGBM_SPECKLE_RANGE   = 2
+
 # ── Camera intrinsics (OAK-D at 320×240) ──────────────────────────────────────
 FX = 161.4
 FY = 161.4
@@ -189,7 +197,19 @@ class SlamFrontend(Node):
         # ── Sensors ───────────────────────────────────────────────────────────
         self.yaw_rate = 0.0   # from IMU — used for gate
         self.lidar_z  = 0.0   # from MTF-01 — used for Z always
-        self.right_img = None  # latest right stereo image
+        self.right_img     = None
+        self.disparity_map = None
+        self.sgbm = cv2.StereoSGBM_create(
+            minDisparity=SGBM_MIN_DISPARITY,
+            numDisparities=SGBM_NUM_DISPARITIES,
+            blockSize=SGBM_BLOCK_SIZE,
+            P1=8  * SGBM_BLOCK_SIZE ** 2,
+            P2=32 * SGBM_BLOCK_SIZE ** 2,
+            disp12MaxDiff=1,
+            uniquenessRatio=SGBM_UNIQUENESS,
+            speckleWindowSize=SGBM_SPECKLE_WINDOW,
+            speckleRange=SGBM_SPECKLE_RANGE,
+            mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
 
         # ── State flags ───────────────────────────────────────────────────────
         self.tracking_ok    = False
@@ -259,6 +279,14 @@ class SlamFrontend(Node):
             self._publish_pose()
             self._publish_quality(0.0, 0)
             return
+
+        # ── Update disparity map once per frame
+        if self.right_img is not None:
+            try:
+                disp = self.sgbm.compute(gray, self.right_img)
+                self.disparity_map = disp.astype(np.float32) / 16.0
+            except Exception:
+                self.disparity_map = None
 
         # ── First frame: initialize ───────────────────────────────────────────
         if self.prev_left_img is None:
@@ -499,34 +527,19 @@ class SlamFrontend(Node):
         depth = FX * BASELINE / disparity
         """
         depths = np.full(len(pts_2d), np.nan)
-        if right_img is None:
+        if self.disparity_map is None or len(pts_2d) == 0:
             return depths
-
+        h, w = self.disparity_map.shape
         for i, (u, v) in enumerate(pts_2d):
-            u, v = int(u), int(v)
-            if not (5 <= u < left_img.shape[1] - 5 and
-                    5 <= v < left_img.shape[0] - 5):
+            ui, vi = int(round(u)), int(round(v))
+            if not (0 <= ui < w and 0 <= vi < h):
                 continue
-
-            patch_l   = left_img[v-5:v+6, u-5:u+6].astype(np.float32)
-            best_sad  = float('inf')
-            best_disp = -1
-
-            for d in range(4, min(u, 128)):
-                ur = u - d
-                if ur < 5:
-                    break
-                patch_r = right_img[v-5:v+6, ur-5:ur+6].astype(np.float32)
-                sad     = np.sum(np.abs(patch_l - patch_r))
-                if sad < best_sad:
-                    best_sad  = sad
-                    best_disp = d
-
-            if best_disp > 0 and best_sad < 5000:
-                depth = FX * BASELINE / best_disp
-                if MIN_STEREO_DEPTH <= depth <= MAX_STEREO_DEPTH:
-                    depths[i] = depth
-
+            disp = self.disparity_map[vi, ui]
+            if disp <= SGBM_MIN_DISPARITY or disp >= SGBM_NUM_DISPARITIES:
+                continue
+            depth = FX * BASELINE / disp
+            if MIN_STEREO_DEPTH <= depth <= MAX_STEREO_DEPTH:
+                depths[i] = depth
         return depths
 
     # ═════════════════════════════════════════════════════════════════════════
