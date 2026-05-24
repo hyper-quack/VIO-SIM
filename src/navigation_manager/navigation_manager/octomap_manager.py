@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-octomap_manager.py — 3D volumetric mapping using Open3D
+octomap_manager.py — 3D volumetric mapping with full sensor fusion.
 
-Replaces obstacle_detector.py with:
-  - Open3D voxel-based 3D map (no fixed grid size)
-  - Rolling window: only keeps voxels within WINDOW_RADIUS of drone
-  - Evidence accumulation per voxel (like SLAM map)
-  - Distance field via KDTree on occupied voxels
-  - Trust weight input for RL depth filter integration
-  - Backward-compatible /costmap, /voxel_map, /obstacle_distances
+Receives camera-frame points from depth_filter and projects them
+to world frame using:
+  - PX4 full attitude (pitch, roll, yaw) via quaternion
+  - MTF-01 LiDAR altitude
+  - VIO/GPS position (x, y)
 
-Architecture:
-  depth_filter → /pointcloud/filtered → THIS NODE → /costmap (A*)
-                                                   → /voxel_map (RViz)
-                                                   → /obstacle_distances (safety)
-                                                   → /distance_field (future RRT*)
+Camera mount offset (from model.sdf):
+  x=+0.01233m forward, y=+0.0375m left, z=+0.01878m up
+
+Coordinate convention:
+  World X = PX4 East  = corridor length (0→20m)
+  World Y = PX4 North = corridor width  (0→6m)
+  World Z = up (from LiDAR altitude)
 """
 
 import math
@@ -27,6 +27,7 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Pose, PoseStamped
 from std_msgs.msg import Float32MultiArray, Float32, Bool
 from px4_msgs.msg import VehicleOdometry
+from collections import deque
 import struct
 
 try:
@@ -34,49 +35,74 @@ try:
 except ImportError:
     SPAWN_X, SPAWN_Y = 1.0, 3.0
 
+# ── Camera mount offset (body frame) ─────────────────────────────
+CAM_X =  0.01233   # forward
+CAM_Y =  0.0375    # left
+CAM_Z =  0.01878   # up
 
-# ═══════════════════════════════════════════════════════════════════
-# Parameters
-# ═══════════════════════════════════════════════════════════════════
+# ── Rolling window ────────────────────────────────────────────────
+WINDOW_RADIUS    = 12.0
+PRUNE_INTERVAL   = 2.0
 
-# Rolling window
-WINDOW_RADIUS       = 6.0       # metres — keep voxels within this radius
-PRUNE_INTERVAL      = 2.0       # seconds — how often to prune old voxels
+# ── Voxel resolution ─────────────────────────────────────────────
+VOXEL_SIZE       = 0.30
 
-# Voxel resolution
-VOXEL_SIZE          = 0.10      # metres per voxel (same as old grid)
+# ── Temporal consistency ──────────────────────────────────────────
+CONSISTENCY_FRAMES = 3      # frames voxel must be seen before confirming
+DECAY_FRAMES       = 5      # frames without observation before removing
 
-# Evidence accumulation
-MARK_INCREMENT      = 8.0      # evidence added per point hit
-FREE_DECREMENT      = 15.0       # evidence removed per free observation
-CONFIRM_THRESHOLD   = 120.0      # evidence needed to confirm obstacle
-FREE_THRESHOLD      = 10.0      # evidence below this → remove voxel
-MAX_EVIDENCE        = 200.0     # cap evidence accumulation
+# ── Evidence ──────────────────────────────────────────────────────
+MARK_INCREMENT      = 8.0
+FREE_DECREMENT      = 25.0
+CONFIRM_THRESHOLD   = 60.0
+HIGH_CONF_THRESHOLD = 150.0
+FREE_THRESHOLD      = 10.0
+MAX_EVIDENCE        = 300.0
 
-# Safety filtering
-SELF_EXCLUSION_RADIUS = 1.5     # metres — ignore points near drone
-MIN_POINTS_PER_FRAME  = 50      # skip frames with too few points
-Z_MIN               = 0.8       # metres — minimum obstacle altitude
-Z_MAX               = 3.0       # metres — maximum obstacle altitude
+# ── Safety filtering ──────────────────────────────────────────────
+SELF_EXCLUSION_RADIUS = 0.8
+MIN_POINTS_PER_FRAME  = 20
+Z_MIN                 = 0.8
+Z_MAX                 = 3.0
 
-# Costmap output (backward compatibility with A*)
-COSTMAP_RESOLUTION  = 0.10      # metres per cell
-COSTMAP_WIDTH       = 200       # cells (covers WINDOW_RADIUS * 2)
-COSTMAP_HEIGHT      = 120       # cells
-COSTMAP_Z_MIN       = 0.5       # only project obstacles in this Z band
-COSTMAP_Z_MAX       = 2.8       # into the 2D costmap
+# ── Costmap ───────────────────────────────────────────────────────
+COSTMAP_RESOLUTION = 0.10
+COSTMAP_WIDTH      = 200
+COSTMAP_HEIGHT     = 120
+COSTMAP_Z_MIN      = 0.5
+COSTMAP_Z_MAX      = 2.8
 
-# Update rate
-UPDATE_RATE          = 10.0     # Hz — publish rate
+# ── Pose history ──────────────────────────────────────────────────
+POSE_HISTORY_SIZE  = 100    # ~2s at 50Hz
+
+# ── Update rate ───────────────────────────────────────────────────
+UPDATE_RATE        = 10.0
 
 
 class VoxelData:
-    """Stores evidence and state for each voxel."""
-    __slots__ = ['evidence', 'confirmed']
-
+    __slots__ = ['hits', 'misses', 'evidence', 'confirmed', 'high_confidence']
     def __init__(self):
-        self.evidence = 0.0
-        self.confirmed = False
+        self.hits           = 0
+        self.misses         = 0
+        self.evidence       = 0.0
+        self.confirmed      = False
+        self.high_confidence = False
+
+
+def _wrap_angle(a):
+    while a >  math.pi: a -= 2*math.pi
+    while a < -math.pi: a += 2*math.pi
+    return a
+
+
+def _quat_to_rotation_matrix(w, x, y, z):
+    """Convert quaternion to 3x3 rotation matrix."""
+    R = np.array([
+        [1-2*(y*y+z*z),   2*(x*y-w*z),   2*(x*z+w*y)],
+        [  2*(x*y+w*z), 1-2*(x*x+z*z),   2*(y*z-w*x)],
+        [  2*(x*z-w*y),   2*(y*z+w*x), 1-2*(x*x+y*y)],
+    ], dtype=np.float64)
+    return R
 
 
 class OctomapManager(Node):
@@ -84,186 +110,151 @@ class OctomapManager(Node):
     def __init__(self):
         super().__init__('octomap_manager')
 
-        # ── QoS profiles ─────────────────────────────────────────────
         qos_reliable = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=5)
+            history=HistoryPolicy.KEEP_LAST, depth=5)
 
-        qos_besteffort = QoSProfile(
+        qos_best = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=10)
+            history=HistoryPolicy.KEEP_LAST, depth=10)
 
         qos_px4 = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1)
+            history=HistoryPolicy.KEEP_LAST, depth=1)
 
-        # ── Voxel map ────────────────────────────────────────────────
-        # Key: (gx, gy, gz) tuple — grid coordinates
-        # Value: VoxelData with evidence accumulation
+        # ── Voxel map ─────────────────────────────────────────────
         self.voxels = {}
 
-        # ── Drone state ──────────────────────────────────────────────
+        # ── Pose history: (ts_ns, x, y, z, qw, qx, qy, qz) ──────
+        self.pose_history = deque(maxlen=POSE_HISTORY_SIZE)
+
+        # ── Current drone state ───────────────────────────────────
         self.drone_x   = None
         self.drone_y   = None
         self.drone_z   = 0.0
         self.drone_yaw = 0.0
+        self.lidar_z   = 0.0
 
-        # ── Trust weight (RL filter will set this later) ─────────────
-        self.trust_weight = 1.0     # 1.0 = full trust, 0.0 = skip
-        self.slam_pose_available = False  # True when corrected pose arrives
+        # ── VIO ───────────────────────────────────────────────────
+        self.vio_x   = None
+        self.vio_y   = None
+        self.vio_z   = None
+        self.slam_pose_available = False
 
-        # ── Safety distances ─────────────────────────────────────────
-        self.front_dist       = float('inf')
-        self.left_dist        = float('inf')
-        self.right_dist       = float('inf')
-        self.depth_front_dist = float('inf')
-        self.depth_left_dist  = float('inf')
-        self.depth_right_dist = float('inf')
+        # ── Trust weight ──────────────────────────────────────────
+        self.trust_weight = 1.0
 
-        # ── Last prune time ──────────────────────────────────────────
+        # ── Safety distances ──────────────────────────────────────
+        self.front_dist = float('inf')
+        self.left_dist  = float('inf')
+        self.right_dist = float('inf')
+
+        # ── Timing ────────────────────────────────────────────────
         self.last_prune_time = 0.0
 
-        # ── Force update state ───────────────────────────────────────
+        # ── Force update ──────────────────────────────────────────
         self.force_update_active  = False
         self.force_update_counter = 0
 
-        # ── Subscribers ──────────────────────────────────────────────
+        # ── Subscribers ───────────────────────────────────────────
         self.create_subscription(
-            VehicleOdometry, '/fmu/out/vehicle_odometry',
-            self.odom_cb, qos_px4)
-
+            VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_cb, qos_px4)
         self.create_subscription(
-            Bool, '/force_update',
-            self.force_update_cb, 10)
-
+            LaserScan, '/mtf01/lidar', self.lidar_cb, 10)
         self.create_subscription(
-            PointCloud2, '/pointcloud/filtered',
-            self.cloud_cb, qos_besteffort)
-
+            PointCloud2, '/pointcloud/camera', self.cloud_cb, qos_best)
         self.create_subscription(
-            LaserScan, '/front_lidar/scan',
-            self.front_cb, qos_besteffort)
-
+            LaserScan, '/front_lidar/scan', self.front_cb, qos_best)
         self.create_subscription(
-            LaserScan, '/left_lidar/scan',
-            self.left_cb, qos_besteffort)
-
+            LaserScan, '/left_lidar/scan',  self.left_cb,  qos_best)
         self.create_subscription(
-            LaserScan, '/right_lidar/scan',
-            self.right_cb, qos_besteffort)
-
-        # Trust weight from RL filter (future)
+            LaserScan, '/right_lidar/scan', self.right_cb, qos_best)
         self.create_subscription(
-            Float32, '/depth_trust_weight',
-            self.trust_cb, 10)
-
-        # SLAM corrected pose (replaces PX4 for mapping when available)
+            Float32, '/depth_trust_weight', self.trust_cb, 10)
         self.create_subscription(
-            PoseStamped, '/slam/corrected_pose',
-            self.slam_pose_cb, qos_reliable)
+            PoseStamped, '/slam/corrected_pose', self.slam_pose_cb, qos_reliable)
+        self.create_subscription(
+            Bool, '/force_update', self.force_update_cb, 10)
+        self.create_subscription(
+            Bool, '/map_reset', self.map_reset_cb, 10)
 
-        # ── Publishers ───────────────────────────────────────────────
+        # ── Publishers ────────────────────────────────────────────
         self.costmap_pub   = self.create_publisher(OccupancyGrid, '/costmap', 10)
         self.voxel_pub     = self.create_publisher(PointCloud2, '/voxel_map', 10)
         self.distances_pub = self.create_publisher(Float32MultiArray, '/obstacle_distances', 10)
 
-        # ── Timer ────────────────────────────────────────────────────
         self.create_timer(1.0 / UPDATE_RATE, self.update_and_publish)
 
         self.get_logger().info(
             f'OctomapManager started ✓  '
-            f'voxel={VOXEL_SIZE}m, window={WINDOW_RADIUS}m, '
-            f'confirm={CONFIRM_THRESHOLD}, '
-            f'Open3D backed')
+            f'voxel={VOXEL_SIZE}m  consistency={CONSISTENCY_FRAMES}frames  '
+            f'window={WINDOW_RADIUS}m')
 
-    # ═══════════════════════════════════════════════════════════════
-    # Helpers
-    # ═══════════════════════════════════════════════════════════════
-
-    def _wrap_angle(self, a):
-        while a > math.pi:  a -= 2 * math.pi
-        while a < -math.pi: a += 2 * math.pi
-        return a
-
-    def _world_to_voxel(self, wx, wy, wz):
-        """Convert world coordinate to voxel grid key."""
-        gx = int(math.floor(wx / VOXEL_SIZE))
-        gy = int(math.floor(wy / VOXEL_SIZE))
-        gz = int(math.floor(wz / VOXEL_SIZE))
-        return (gx, gy, gz)
-
-    def _voxel_to_world(self, gx, gy, gz):
-        """Convert voxel key to world coordinate (center of voxel)."""
-        wx = (gx + 0.5) * VOXEL_SIZE
-        wy = (gy + 0.5) * VOXEL_SIZE
-        wz = (gz + 0.5) * VOXEL_SIZE
-        return wx, wy, wz
-
-    def _parse_pointcloud2(self, msg):
-        """Fast PointCloud2 parsing to numpy array."""
-        field_offsets = {f.name: f.offset for f in msg.fields}
-        if 'x' not in field_offsets:
-            return None
-        x_off = field_offsets['x']
-        y_off = field_offsets['y']
-        z_off = field_offsets['z']
-        step  = msg.point_step
-        data  = bytes(msg.data)
-        n     = msg.width * msg.height
-
-        if n == 0:
-            return None
-
-        # Fast numpy parsing
-        points = np.zeros((n, 3), dtype=np.float32)
-        for i in range(n):
-            base = i * step
-            points[i, 0] = struct.unpack_from('f', data, base + x_off)[0]
-            points[i, 1] = struct.unpack_from('f', data, base + y_off)[0]
-            points[i, 2] = struct.unpack_from('f', data, base + z_off)[0]
-
-        # Filter NaN/inf
-        valid = np.all(np.isfinite(points), axis=1)
-        points = points[valid]
-
-        return points if len(points) > 0 else None
-
-    # ═══════════════════════════════════════════════════════════════
-    # Callbacks
-    # ═══════════════════════════════════════════════════════════════
+    # ── Callbacks ─────────────────────────────────────────────────
 
     def odom_cb(self, msg):
-        """PX4 NED → World frame — only used if SLAM not available."""
-        if self.slam_pose_available:
-            return
-        self.drone_x = float(msg.position[1]) + SPAWN_X
-        self.drone_y = float(msg.position[0]) + SPAWN_Y
-        self.drone_z = -float(msg.position[2])
+        """Store full pose in history for timestamp sync."""
+        # Position
+        x = float(msg.position[1]) + SPAWN_X   # PX4 East → World X
+        y = float(msg.position[0]) + SPAWN_Y   # PX4 North → World Y
+        z = -float(msg.position[2])             # NED down → up
 
-        q = msg.q
-        siny = 2.0 * (q[0] * q[3] + q[1] * q[2])
-        cosy = 1.0 - 2.0 * (q[2] ** 2 + q[3] ** 2)
-        self.drone_yaw = self._wrap_angle(
-            math.atan2(siny, cosy) - math.pi / 2.0)
+        # Full quaternion — PX4 uses [w, x, y, z]
+        qw = float(msg.q[0])
+        qx = float(msg.q[1])
+        qy = float(msg.q[2])
+        qz = float(msg.q[3])
 
-    def trust_cb(self, msg):
-        """Receive trust weight from RL depth filter."""
-        self.trust_weight = max(0.0, min(1.0, float(msg.data)))
+        # Yaw for safety distance calculation
+        siny = 2.0*(qw*qz + qx*qy)
+        cosy = 1.0 - 2.0*(qy*qy + qz*qz)
+        yaw  = _wrap_angle(math.atan2(siny, cosy) - math.pi/2.0)
+
+        # Store in history with PX4 timestamp (microseconds → nanoseconds)
+        ts_ns = msg.timestamp * 1000
+        self.pose_history.append((ts_ns, x, y, z, qw, qx, qy, qz, yaw))
+
+        # Update current state (used by safety distances)
+        if not self.slam_pose_available:
+            self.drone_x   = x
+            self.drone_y   = y
+            self.drone_z   = z
+            self.drone_yaw = yaw
+
+    def lidar_cb(self, msg):
+        """MTF-01 downward LiDAR — altitude above ground."""
+        if msg.ranges and math.isfinite(msg.ranges[0]) and msg.ranges[0] > 0.01:
+            self.lidar_z = float(msg.ranges[0])
+            # Update Z in latest pose history entry
+            if self.pose_history:
+                entry = list(self.pose_history[-1])
+                entry[3] = self.lidar_z  # replace Z with LiDAR altitude
+                self.pose_history[-1] = tuple(entry)
 
     def slam_pose_cb(self, msg):
-        """Use SLAM corrected pose for mapping instead of raw PX4."""
-        self.drone_x = float(msg.pose.position.x)
-        self.drone_y = float(msg.pose.position.y)
-        self.drone_z = float(msg.pose.position.z)
+        """VIO corrected pose."""
+        nx = float(msg.pose.position.x)
+        ny = float(msg.pose.position.y)
+        nz = float(msg.pose.position.z)
+        # Reject large jumps
+        if self.drone_x is not None:
+            jump = math.sqrt((nx-self.drone_x)**2 + (ny-self.drone_y)**2)
+            if jump > 1.0:
+                self.get_logger().warn(
+                    f'VIO jump {jump:.2f}m rejected', throttle_duration_sec=2.0)
+                return
+        self.drone_x = nx
+        self.drone_y = ny
+        self.drone_z = nz
         qz = float(msg.pose.orientation.z)
         qw = float(msg.pose.orientation.w)
-        self.drone_yaw = self._wrap_angle(2.0 * math.atan2(qz, qw))
+        self.drone_yaw = _wrap_angle(2.0*math.atan2(qz, qw))
         self.slam_pose_available = True
+
+    def trust_cb(self, msg):
+        self.trust_weight = max(0.0, min(1.0, float(msg.data)))
 
     def front_cb(self, msg):
         r = [x for x in msg.ranges if math.isfinite(x) and x > 0.05]
@@ -277,214 +268,268 @@ class OctomapManager(Node):
         r = [x for x in msg.ranges if math.isfinite(x) and x > 0.05]
         self.right_dist = min(r) if r else float('inf')
 
-    # ═══════════════════════════════════════════════════════════════
-    # Point cloud integration
-    # ═══════════════════════════════════════════════════════════════
+    def map_reset_cb(self, msg):
+        if msg.data:
+            count = len(self.voxels)
+            self.voxels.clear()
+            self.get_logger().warn(f'Map reset — cleared {count} voxels')
 
     def force_update_cb(self, msg):
-        """Temporarily lower confirm threshold to update map faster when stuck."""
         if msg.data:
-            self.force_update_active = True
-            self.force_update_counter = 100  # ~10s at 10Hz
-            self.get_logger().warn('Force map update active')
+            self.force_update_active  = True
+            self.force_update_counter = 100
         else:
             self.force_update_active = False
 
+    # ── Pose lookup ───────────────────────────────────────────────
+
+    def _get_pose_at(self, ts_ns):
+        """Find pose closest to given timestamp."""
+        if not self.pose_history:
+            return None
+        return min(self.pose_history, key=lambda p: abs(p[0] - ts_ns))
+
+    # ── Voxel helpers ─────────────────────────────────────────────
+
+    def _world_to_voxel(self, wx, wy, wz):
+        return (int(math.floor(wx/VOXEL_SIZE)),
+                int(math.floor(wy/VOXEL_SIZE)),
+                int(math.floor(wz/VOXEL_SIZE)))
+
+    def _voxel_to_world(self, gx, gy, gz):
+        return ((gx+0.5)*VOXEL_SIZE,
+                (gy+0.5)*VOXEL_SIZE,
+                (gz+0.5)*VOXEL_SIZE)
+
+    # ── Point cloud parsing ───────────────────────────────────────
+
+    def _parse_pointcloud2(self, msg):
+        field_offsets = {f.name: f.offset for f in msg.fields}
+        if 'x' not in field_offsets:
+            return None
+        x_off = field_offsets['x']
+        y_off = field_offsets['y']
+        z_off = field_offsets['z']
+        step  = msg.point_step
+        data  = bytes(msg.data)
+        n     = msg.width * msg.height
+        if n == 0:
+            return None
+        pts = np.zeros((n, 3), dtype=np.float32)
+        for i in range(n):
+            base = i * step
+            pts[i,0] = struct.unpack_from('f', data, base+x_off)[0]
+            pts[i,1] = struct.unpack_from('f', data, base+y_off)[0]
+            pts[i,2] = struct.unpack_from('f', data, base+z_off)[0]
+        valid = np.all(np.isfinite(pts), axis=1)
+        pts = pts[valid]
+        return pts if len(pts) > 0 else None
+
+    # ── Main cloud callback ───────────────────────────────────────
+
     def cloud_cb(self, msg):
-        """Integrate filtered point cloud into voxel map."""
-        # Decrement force update counter once per frame
+        """
+        Project camera-frame points to world frame using full 3D rotation.
+        
+        Camera frame:  x=right, y=down, z=forward
+        Body frame:    x=forward, y=left, z=up
+        World frame:   x=East(corridor), y=North, z=up
+        
+        Transform chain:
+          camera → body (fixed rotation + offset)
+          body   → world (drone attitude quaternion)
+        """
         if self.force_update_active and self.force_update_counter > 0:
             self.force_update_counter -= 1
             if self.force_update_counter == 0:
                 self.force_update_active = False
-                self.get_logger().info('Force update complete — normal threshold restored')
 
-        if self.drone_x is None:
-            return
-
-        # ── Apply trust weight ───────────────────────────────────
         if self.trust_weight < 0.05:
-            # RL filter says: skip this frame entirely
             return
 
-        points = self._parse_pointcloud2(msg)
-        if points is None or len(points) < MIN_POINTS_PER_FRAME:
+        # Get synchronized pose from history
+        ts_ns = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+        pose  = self._get_pose_at(ts_ns)
+        if pose is None:
             return
 
-        drone_pos = np.array([self.drone_x, self.drone_y, self.drone_z])
+        _, px, py, pz, qw, qx, qy, qz, yaw = pose
 
-        # ── Scale evidence by trust weight ───────────────────────
-        mark_inc = MARK_INCREMENT * self.trust_weight
-        free_dec = FREE_DECREMENT * self.trust_weight
+        # Use LiDAR altitude if available
+        alt_z = self.lidar_z if self.lidar_z > 0.1 else pz
 
-        # ── Drone voxel for ray casting origin ───────────────────
-        drone_voxel = self._world_to_voxel(
-            self.drone_x, self.drone_y, self.drone_z)
+        # Parse camera-frame points
+        cam_pts = self._parse_pointcloud2(msg)
+        if cam_pts is None or len(cam_pts) < MIN_POINTS_PER_FRAME:
+            return
 
-        # ── Distance tracking for safety ─────────────────────────
+        # ── Step 1: Camera → Body frame ───────────────────────────
+        # Camera: x=right, y=down, z=forward
+        # Body:   x=forward, y=left, z=up
+        body_x =  cam_pts[:, 2]         # camera z → body x (forward)
+        body_y = -cam_pts[:, 0]         # camera -x → body y (left)
+        body_z = -cam_pts[:, 1]         # camera -y → body z (up)
+
+        # Add camera mount offset
+        body_x += CAM_X
+        body_y += CAM_Y
+        body_z += CAM_Z
+
+        body_pts = np.stack([body_x, body_y, body_z], axis=1)
+
+        # ── Step 2: Body → World frame using full quaternion ──────
+        # PX4 NED body frame: x=North, y=East, z=Down
+        # We need to handle the PX4 NED convention properly
+        #
+        # PX4 quaternion rotates from body to NED world
+        # Then we convert NED to our world frame:
+        #   world_x = ned_y + SPAWN_X  (East → X)
+        #   world_y = ned_x + SPAWN_Y  (North → Y)
+        #   world_z = -ned_z           (Down → up)
+
+        R = _quat_to_rotation_matrix(qw, qx, qy, qz)
+
+        # Rotate body points to NED world
+        ned_pts = (R @ body_pts.T).T   # shape (N, 3)
+
+        # Convert NED to our world frame + add drone position
+        world_x = ned_pts[:, 1] + px   # NED East + drone_x
+        world_y = -ned_pts[:, 0] + py   # NED -North + drone_y
+        world_z = -ned_pts[:, 2] + alt_z  # NED Down→up + altitude
+
+        # ── Altitude filter ───────────────────────────────────────
+        alt_ok  = (world_z >= Z_MIN) & (world_z <= Z_MAX)
+        world_x = world_x[alt_ok]
+        world_y = world_y[alt_ok]
+        world_z = world_z[alt_ok]
+
+        if len(world_x) == 0:
+            return
+
+        # ── Self exclusion ────────────────────────────────────────
+        dist_2d = np.sqrt((world_x-px)**2 + (world_y-py)**2)
+        far     = dist_2d > SELF_EXCLUSION_RADIUS
+        world_x = world_x[far]
+        world_y = world_y[far]
+        world_z = world_z[far]
+        dist_2d = dist_2d[far]
+
+        if len(world_x) == 0:
+            return
+
+        # ── Rolling window ────────────────────────────────────────
+        dist_3d = np.sqrt((world_x-px)**2 + (world_y-py)**2 + (world_z-alt_z)**2)
+        window  = dist_3d <= WINDOW_RADIUS
+        world_x = world_x[window]
+        world_y = world_y[window]
+        world_z = world_z[window]
+        dist_2d = dist_2d[window]
+
+        # ── Temporal consistency + evidence ───────────────────────
+        seen_voxels = set()
+        for i in range(len(world_x)):
+            vkey = self._world_to_voxel(world_x[i], world_y[i], world_z[i])
+            seen_voxels.add(vkey)
+
+        mark_inc  = MARK_INCREMENT * self.trust_weight
+        threshold = CONFIRM_THRESHOLD * 0.4 if self.force_update_active else CONFIRM_THRESHOLD
+
+        for vkey in seen_voxels:
+            if vkey not in self.voxels:
+                self.voxels[vkey] = VoxelData()
+            vd = self.voxels[vkey]
+            vd.hits    += 1
+            vd.misses   = 0
+            vd.evidence = min(MAX_EVIDENCE, vd.evidence + mark_inc)
+            if vd.hits >= CONSISTENCY_FRAMES and vd.evidence >= threshold:
+                vd.confirmed = True
+            if vd.evidence >= HIGH_CONF_THRESHOLD:
+                vd.high_confidence = True
+
+        # Decay unseen voxels
+        for vkey in list(self.voxels.keys()):
+            if vkey not in seen_voxels:
+                vd = self.voxels[vkey]
+                vd.misses   += 1
+                vd.hits      = max(0, vd.hits - 1)
+                vd.evidence  = max(0.0, vd.evidence - 3.0)
+                if vd.evidence < HIGH_CONF_THRESHOLD:
+                    vd.high_confidence = False
+                if vd.evidence < FREE_THRESHOLD:
+                    vd.confirmed = False
+
+        # ── Safety distances ──────────────────────────────────────
+        cos_y = math.cos(-yaw)
+        sin_y = math.sin(-yaw)
         front_min = float('inf')
         left_min  = float('inf')
         right_min = float('inf')
 
-        # ── Process each point ───────────────────────────────────
-        for i in range(len(points)):
-            wx, wy, wz = points[i]
+        for i in range(len(world_x)):
+            bx =  cos_y*(world_x[i]-px) + sin_y*(world_y[i]-py)
+            by = -sin_y*(world_x[i]-px) + cos_y*(world_y[i]-py)
+            d  = dist_2d[i]
+            if bx > 0:
+                if by < -0.15:   left_min  = min(left_min,  d)
+                elif by > 0.15:  right_min = min(right_min, d)
+                else:            front_min = min(front_min, d)
 
-            # Self exclusion
-            dist_2d = math.sqrt(
-                (wx - self.drone_x) ** 2 + (wy - self.drone_y) ** 2)
-            if dist_2d < SELF_EXCLUSION_RADIUS:
-                continue
+        self.depth_front = front_min
+        self.depth_left  = left_min
+        self.depth_right = right_min
 
-            # Rolling window — ignore points far from drone
-            dist_3d = math.sqrt(
-                (wx - self.drone_x) ** 2 +
-                (wy - self.drone_y) ** 2 +
-                (wz - self.drone_z) ** 2)
-            if dist_3d > WINDOW_RADIUS:
-                continue
+        self.get_logger().info(
+            f'Voxels={len(self.voxels)} '
+            f'confirmed={sum(1 for v in self.voxels.values() if v.confirmed)} '
+            f'F={front_min:.2f} L={left_min:.2f} R={right_min:.2f}',
+            throttle_duration_sec=3.0)
 
-            # Altitude filter
-            if wz < Z_MIN or wz > Z_MAX:
-                continue
-
-            # ── Mark obstacle voxel ──────────────────────────────
-            vkey = self._world_to_voxel(wx, wy, wz)
-            if vkey not in self.voxels:
-                self.voxels[vkey] = VoxelData()
-            vd = self.voxels[vkey]
-            vd.evidence = min(MAX_EVIDENCE, vd.evidence + mark_inc)
-            # Lower threshold when force update active
-            threshold = CONFIRM_THRESHOLD * 0.4 if self.force_update_active else CONFIRM_THRESHOLD
-            if vd.evidence >= threshold:
-                vd.confirmed = True
-
-            # ── Ray casting: free-space clearing ─────────────────
-            # Simple fast version: sample points along ray
-            ray_len = dist_3d
-            n_samples = max(1, int(ray_len / VOXEL_SIZE))
-            for s in range(n_samples):
-                t = s / n_samples
-                rx = self.drone_x + t * (wx - self.drone_x)
-                ry = self.drone_y + t * (wy - self.drone_y)
-                rz = self.drone_z + t * (wz - self.drone_z)
-                fkey = self._world_to_voxel(rx, ry, rz)
-                if fkey == vkey:
-                    break   # don't clear the obstacle voxel itself
-                if fkey in self.voxels:
-                    fd = self.voxels[fkey]
-                    fd.evidence = max(0.0, fd.evidence - free_dec)
-                    if fd.evidence < FREE_THRESHOLD:
-                        fd.confirmed = False
-
-            # ── Zone distances for safety ────────────────────────
-            body_x = wx - self.drone_x
-            body_y = wy - self.drone_y
-            cos_y = math.cos(-self.drone_yaw)
-            sin_y = math.sin(-self.drone_yaw)
-            fwd  =  cos_y * body_x + sin_y * body_y
-            side = -sin_y * body_x + cos_y * body_y
-
-            if fwd > 0:
-                if side < -0.15:
-                    left_min = min(left_min, dist_2d)
-                elif side > 0.15:
-                    right_min = min(right_min, dist_2d)
-                else:
-                    front_min = min(front_min, dist_2d)
-
-        self.depth_front_dist = front_min
-        self.depth_left_dist  = left_min
-        self.depth_right_dist = right_min
-
-    # ═══════════════════════════════════════════════════════════════
-    # Rolling window pruning
-    # ═══════════════════════════════════════════════════════════════
+    # ── Pruning ───────────────────────────────────────────────────
 
     def _prune_voxels(self):
-        """Remove voxels outside rolling window."""
         if self.drone_x is None:
             return
-
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self.last_prune_time < PRUNE_INTERVAL:
             return
         self.last_prune_time = now
 
-        drone_pos = np.array([self.drone_x, self.drone_y, self.drone_z])
         radius_sq = WINDOW_RADIUS ** 2
-
         keys_to_remove = []
         for vkey in self.voxels:
             wx, wy, wz = self._voxel_to_world(*vkey)
-            dx = wx - drone_pos[0]
-            dy = wy - drone_pos[1]
-            dz = wz - drone_pos[2]
-            if dx * dx + dy * dy + dz * dz > radius_sq:
+            dx = wx - self.drone_x
+            dy = wy - self.drone_y
+            if dx*dx + dy*dy > radius_sq:
                 keys_to_remove.append(vkey)
-
+            elif self.voxels[vkey].evidence <= 0.0:
+                keys_to_remove.append(vkey)
         for k in keys_to_remove:
             del self.voxels[k]
 
-        if len(keys_to_remove) > 0:
-            self.get_logger().debug(
-                f'Pruned {len(keys_to_remove)} voxels, '
-                f'{len(self.voxels)} remaining')
-
-    # ═══════════════════════════════════════════════════════════════
-    # Also remove low-evidence unconfirmed voxels periodically
-    # ═══════════════════════════════════════════════════════════════
-
-    def _cleanup_weak_voxels(self):
-        """Remove voxels with very low evidence (noise cleanup)."""
-        keys_to_remove = [
-            k for k, v in self.voxels.items()
-            if v.evidence < FREE_THRESHOLD and not v.confirmed
-        ]
-        for k in keys_to_remove:
-            del self.voxels[k]
-
-    # ═══════════════════════════════════════════════════════════════
-    # Publishers
-    # ═══════════════════════════════════════════════════════════════
+    # ── Publishers ────────────────────────────────────────────────
 
     def update_and_publish(self):
-        """Main publish loop at UPDATE_RATE Hz."""
         self._prune_voxels()
-        self._cleanup_weak_voxels()
         self._publish_costmap()
         self._publish_voxel_map()
         self._publish_distances()
 
     def _publish_costmap(self):
-        """
-        Project confirmed 3D voxels into a 2D OccupancyGrid.
-        The grid is centered on the drone and moves with it.
-        Backward compatible with A* planner.
-        """
         if self.drone_x is None:
             return
-
-        # Costmap centered on drone
-        origin_x = self.drone_x - (COSTMAP_WIDTH * COSTMAP_RESOLUTION) / 2.0
+        origin_x = self.drone_x - (COSTMAP_WIDTH  * COSTMAP_RESOLUTION) / 2.0
         origin_y = self.drone_y - (COSTMAP_HEIGHT * COSTMAP_RESOLUTION) / 2.0
-
         grid = np.zeros((COSTMAP_HEIGHT, COSTMAP_WIDTH), dtype=np.int8)
 
         for vkey, vd in self.voxels.items():
-            if not vd.confirmed:
+            if not vd.high_confidence:
                 continue
-
             wx, wy, wz = self._voxel_to_world(*vkey)
-
-            # Only project obstacles in flight altitude band
             if wz < COSTMAP_Z_MIN or wz > COSTMAP_Z_MAX:
                 continue
-
-            # Convert to local costmap cell
             cx = int((wx - origin_x) / COSTMAP_RESOLUTION)
             cy = int((wy - origin_y) / COSTMAP_RESOLUTION)
-
             if 0 <= cx < COSTMAP_WIDTH and 0 <= cy < COSTMAP_HEIGHT:
                 grid[cy, cx] = 100
 
@@ -492,34 +537,25 @@ class OctomapManager(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'
         msg.info.resolution = COSTMAP_RESOLUTION
-        msg.info.width  = COSTMAP_WIDTH
-        msg.info.height = COSTMAP_HEIGHT
-        msg.info.origin = Pose()
+        msg.info.width      = COSTMAP_WIDTH
+        msg.info.height     = COSTMAP_HEIGHT
+        msg.info.origin     = Pose()
         msg.info.origin.position.x = origin_x
         msg.info.origin.position.y = origin_y
-        msg.info.origin.position.z = 0.0
         msg.info.origin.orientation.w = 1.0
         msg.data = grid.flatten().tolist()
         self.costmap_pub.publish(msg)
 
     def _publish_voxel_map(self):
-        """Publish confirmed voxels as PointCloud2 for RViz."""
-        confirmed_voxels = [
-            k for k, v in self.voxels.items() if v.confirmed
-        ]
-
-        if len(confirmed_voxels) == 0:
+        confirmed = [k for k, v in self.voxels.items() if v.confirmed]
+        if not confirmed:
             return
-
-        pts = np.zeros((len(confirmed_voxels), 3), dtype=np.float32)
-        for i, vkey in enumerate(confirmed_voxels):
-            pts[i, 0], pts[i, 1], pts[i, 2] = self._voxel_to_world(*vkey)
-
+        pts = np.array([self._voxel_to_world(*k) for k in confirmed],
+                       dtype=np.float32)
         msg = PointCloud2()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp    = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'
-        msg.height = 1
-        msg.width  = len(pts)
+        msg.height = 1; msg.width = len(pts)
         msg.fields = [
             PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
@@ -533,24 +569,15 @@ class OctomapManager(Node):
         self.voxel_pub.publish(msg)
 
     def _publish_distances(self):
-        """Fuse LiDAR + depth distances for safety layer."""
-        fused_front = min(self.front_dist, self.depth_front_dist)
-        fused_left  = min(self.left_dist,  self.depth_left_dist)
-        fused_right = min(self.right_dist, self.depth_right_dist)
-
+        front = min(self.front_dist, getattr(self, 'depth_front', float('inf')))
+        left  = min(self.left_dist,  getattr(self, 'depth_left',  float('inf')))
+        right = min(self.right_dist, getattr(self, 'depth_right', float('inf')))
         msg = Float32MultiArray()
-        msg.data = [
-            float(fused_front), float(fused_left), float(fused_right),
-            float(self.depth_front_dist),
-            float(self.depth_left_dist),
-            float(self.depth_right_dist),
-        ]
+        msg.data = [float(front), float(left), float(right),
+                    float(getattr(self, 'depth_front', float('inf'))),
+                    float(getattr(self, 'depth_left',  float('inf'))),
+                    float(getattr(self, 'depth_right', float('inf')))]
         self.distances_pub.publish(msg)
-        self.get_logger().info(
-            f'Voxels={len(self.voxels)} confirmed='
-            f'{sum(1 for v in self.voxels.values() if v.confirmed)} '
-            f'F={fused_front:.2f} L={fused_left:.2f} R={fused_right:.2f}',
-            throttle_duration_sec=3.0)
 
 
 def main(args=None):

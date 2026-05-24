@@ -51,13 +51,13 @@ import cv2
 # Parameters
 WAYPOINT_SPACING    = 3.0
 SAME_GOAL_EPS       = 0.3
-REPLAN_INTERVAL     = 2.0
+REPLAN_INTERVAL     = 3.0
 DEFAULT_ALTITUDE    = 2.0
 GOAL_REACHED_DIST   = 0.5
 PUBLISH_RATE        = 1.0
  
-COARSE_RESOLUTION   = 0.5
-INFLATION_RADIUS    = 2
+COARSE_RESOLUTION   = 0.2
+INFLATION_RADIUS    = 4
 DIAGONAL_COST       = 1.414
 CARDINAL_COST       = 1.0
  
@@ -97,6 +97,8 @@ class GlobalPlanner(Node):
         self.inflated_map     = None
  
         self.all_goals = []
+        self.live_costmap = None
+        self.costmap_updated = False
  
         self._try_load_map()
  
@@ -108,7 +110,7 @@ class GlobalPlanner(Node):
  
         self.create_subscription(OccupancyGrid, '/costmap', self.costmap_cb, 10)
 
-        self.path_pub    = self.create_publisher(Path, '/planned_path', 10)
+        self.path_pub    = self.create_publisher(Path, '/global_path', 10)
         self.map_viz_pub = self.create_publisher(OccupancyGrid, '/global_costmap', 10)
  
         self.create_timer(1.0 / PUBLISH_RATE, self.periodic_check)
@@ -282,25 +284,21 @@ class GlobalPlanner(Node):
             return False
         if self.inflated_map[gy, gx] != 0:
             return False
-        # Also check live costmap from octomap
+        # Check live costmap from octomap_manager
         if self.live_costmap is not None:
             wx, wy = self._grid_to_world(gx, gy)
             cm = self.live_costmap
-            # Check a small region around the world point (inflation)
-            check_radius = 2  # cells in costmap resolution
-            blocked = False
-            for ddx in range(-check_radius, check_radius+1):
-                for ddy in range(-check_radius, check_radius+1):
-                    cx = int((wx - cm['origin_x']) / cm['res']) + ddx
-                    cy = int((wy - cm['origin_y']) / cm['res']) + ddy
-                    if 0 <= cx < cm['width'] and 0 <= cy < cm['height']:
-                        if cm['grid'][cy, cx] != 0:
-                            blocked = True
-                            break
-                if blocked:
-                    break
-            if blocked:
-                return False
+            # Convert world point to costmap cell
+            cx = int((wx - cm['origin_x']) / cm['res'])
+            cy = int((wy - cm['origin_y']) / cm['res'])
+            # Check inflation radius in costmap cells
+            inflation = max(1, int(0.5 / cm['res']))
+            for ddx in range(-inflation, inflation+1):
+                for ddy in range(-inflation, inflation+1):
+                    nx, ny = cx + ddx, cy + ddy
+                    if 0 <= nx < cm['width'] and 0 <= ny < cm['height']:
+                        if cm['grid'][ny, nx] != 0:
+                            return False
         return True
  
     @staticmethod

@@ -66,11 +66,18 @@ def generate_launch_description():
         output='screen',
     )
 
+    rrt_local_planner = Node(
+        package='navigation_manager',
+        executable='rrt_local_planner',
+        name='rrt_local_planner',
+        output='screen',
+    )
     return LaunchDescription([
         LogInfo(msg='[nav] T+0  Starting navigation stack'),
         octomap_manager,
         safety_layer,
         a_star_planner,
+        rrt_local_planner,
         path_follower,
         waypoint_manager,
 
