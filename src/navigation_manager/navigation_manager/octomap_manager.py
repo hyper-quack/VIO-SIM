@@ -45,7 +45,7 @@ WINDOW_RADIUS    = 12.0
 PRUNE_INTERVAL   = 2.0
 
 # ── Voxel resolution ─────────────────────────────────────────────
-VOXEL_SIZE       = 0.30
+VOXEL_SIZE       = 0.20
 
 # ── Temporal consistency ──────────────────────────────────────────
 CONSISTENCY_FRAMES = 3      # frames voxel must be seen before confirming
@@ -62,15 +62,15 @@ MAX_EVIDENCE        = 300.0
 # ── Safety filtering ──────────────────────────────────────────────
 SELF_EXCLUSION_RADIUS = 0.8
 MIN_POINTS_PER_FRAME  = 20
-Z_MIN                 = 0.8
-Z_MAX                 = 3.0
+Z_MIN                 = 0.0
+Z_MAX                 = 4.0
 
 # ── Costmap ───────────────────────────────────────────────────────
 COSTMAP_RESOLUTION = 0.10
 COSTMAP_WIDTH      = 200
 COSTMAP_HEIGHT     = 120
-COSTMAP_Z_MIN      = 0.5
-COSTMAP_Z_MAX      = 2.8
+COSTMAP_Z_MIN      = 0.0
+COSTMAP_Z_MAX      = 4.0
 
 # ── Pose history ──────────────────────────────────────────────────
 POSE_HISTORY_SIZE  = 100    # ~2s at 50Hz
@@ -142,6 +142,12 @@ class OctomapManager(Node):
         self.vio_y   = None
         self.vio_z   = None
         self.slam_pose_available = False
+
+        # ── Loop-closure jump detection ───────────────────────────
+        self.slam_jump_active    = False
+        self.slam_jump_counter   = 0
+        self.last_slam_x_jump    = None
+        self.last_slam_y_jump    = None
 
         # ── Trust weight ──────────────────────────────────────────
         self.trust_weight = 1.0
@@ -251,6 +257,20 @@ class OctomapManager(Node):
         qz = float(msg.pose.orientation.z)
         qw = float(msg.pose.orientation.w)
         self.drone_yaw = _wrap_angle(2.0*math.atan2(qz, qw))
+
+        # Loop-closure jump detection — freeze cloud integration for N frames
+        if self.last_slam_x_jump is not None:
+            jump = math.sqrt((nx - self.last_slam_x_jump)**2 +
+                             (ny - self.last_slam_y_jump)**2)
+            if jump > 0.3:
+                self.slam_jump_active  = True
+                self.slam_jump_counter = 20
+                self.get_logger().warn(
+                    f'[slam_pose_cb] Loop-closure jump {jump:.2f} m — '
+                    f'freezing cloud integration for {self.slam_jump_counter} frames')
+        self.last_slam_x_jump = nx
+        self.last_slam_y_jump = ny
+
         self.slam_pose_available = True
 
     def trust_cb(self, msg):
@@ -345,6 +365,16 @@ class OctomapManager(Node):
                 self.force_update_active = False
 
         if self.trust_weight < 0.05:
+            return
+
+        # Loop-closure guard — discard frames while pose is settling
+        if self.slam_jump_active:
+            if self.slam_jump_counter > 0:
+                self.slam_jump_counter -= 1
+                self.get_logger().debug(
+                    f'[cloud_cb] SLAM jump freeze: {self.slam_jump_counter} frames left')
+            if self.slam_jump_counter == 0:
+                self.slam_jump_active = False
             return
 
         # Get synchronized pose from history

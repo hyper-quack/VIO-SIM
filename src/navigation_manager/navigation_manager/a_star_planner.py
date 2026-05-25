@@ -500,8 +500,30 @@ class GlobalPlanner(Node):
             pose.pose.orientation.w = 1.0
             path_msg.poses.append(pose)
  
-        self.path_pub.publish(path_msg)
-        self.last_path = path_msg
+        # Deduplication: only publish if path meaningfully changed vs last publish
+        should_publish = True
+        if self.last_path is not None and self.last_path.poses:
+            op  = self.last_path.poses
+            np_ = path_msg.poses
+            if (abs(len(np_) - len(op)) <= 2 and
+                    abs(np_[-1].pose.position.x - op[-1].pose.position.x) < 0.10 and
+                    abs(np_[-1].pose.position.y - op[-1].pose.position.y) < 0.10 and
+                    abs(np_[0].pose.position.x  - op[0].pose.position.x)  < 0.15 and
+                    abs(np_[0].pose.position.y  - op[0].pose.position.y)  < 0.15):
+                should_publish = False
+                self.get_logger().debug(
+                    f'[GlobalPlanner] /global_path unchanged — suppressing republish '
+                    f'(len={len(np_)} '
+                    f'goal=({np_[-1].pose.position.x:.2f},{np_[-1].pose.position.y:.2f}))')
+
+        if should_publish:
+            self.get_logger().info(
+                f'[GlobalPlanner] PUBLISHING /global_path: {len(path_msg.poses)} waypoints '
+                f'goal=({path_msg.poses[-1].pose.position.x:.2f},'
+                f'{path_msg.poses[-1].pose.position.y:.2f})')
+            self.path_pub.publish(path_msg)
+            self.last_path = path_msg
+
         self.local_stuck = False
  
         self._publish_global_map()
