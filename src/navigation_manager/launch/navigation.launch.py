@@ -4,6 +4,23 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    """
+    Navigation stack launch. Timers are relative to when THIS file is included.
+    When called from csky.launch.py at T=58s, global times are shown below.
+
+    Startup sequence (relative / global when called at T=58s):
+      T= 0s / T=58s  octomap_manager, safety_layer, a_star_planner,
+                     path_follower, waypoint_manager
+      T= 5s / T=63s  slam_frontend — after stereo bridge is stable,
+                                     before octomap needs corrected poses
+    """
+
+    tf_odom_base = Node(
+        package='navigation_manager',
+        executable='tf_odom_base',
+        name='tf_odom_base',
+        output='screen',
+    )
 
     octomap_manager = Node(
         package='navigation_manager',
@@ -11,30 +28,35 @@ def generate_launch_description():
         name='octomap_manager',
         output='screen',
     )
+
     safety_layer = Node(
         package='navigation_manager',
         executable='safety_layer',
         name='safety_layer',
         output='screen',
     )
+
     a_star_planner = Node(
         package='navigation_manager',
         executable='a_star_planner',
         name='a_star_planner',
         output='screen',
     )
+
     path_follower = Node(
         package='navigation_manager',
         executable='path_follower',
         name='path_follower',
         output='screen',
     )
+
     waypoint_manager = Node(
         package='navigation_manager',
         executable='waypoint_manager',
         name='waypoint_manager',
         output='screen',
     )
+
     slam_frontend = Node(
         package='navigation_manager',
         executable='slam_frontend',
@@ -47,56 +69,31 @@ def generate_launch_description():
         name='depth_filter',
         output='screen',
     )
-    rl_depth_filter = Node(
-        package='navigation_manager',
-        executable='rl_depth_filter',
-        name='rl_depth_filter',
-        output='screen',
-    )
-    pose_graph = Node(
-        package='navigation_manager',
-        executable='pose_graph',
-        name='pose_graph',
-        output='screen',
-    )
-    loop_closure = Node(
-        package='navigation_manager',
-        executable='loop_closure',
-        name='loop_closure',
-        output='screen',
-    )
-
-    rrt_local_planner = Node(
-        package='navigation_manager',
-        executable='rrt_local_planner',
-        name='rrt_local_planner',
-        output='screen',
-    )
     return LaunchDescription([
+        # T=0: core navigation stack
         LogInfo(msg='[nav] T+0  Starting navigation stack'),
+        tf_odom_base,
         octomap_manager,
         safety_layer,
         a_star_planner,
-        rrt_local_planner,
         path_follower,
         waypoint_manager,
 
+        # T=5: slam_frontend — after stereo bridge is confirmed stable
         TimerAction(
             period=5.0,
             actions=[
-                LogInfo(msg='[nav] T+5  Starting slam_frontend, depth_filter, loop_closure'),
+                LogInfo(msg='[nav] T+5  Starting slam_frontend'),
                 slam_frontend,
                 depth_filter,
-                loop_closure,
-                pose_graph,
-                rl_depth_filter,
             ],
         ),
 
         TimerAction(
             period=7.0,
             actions=[
-                LogInfo(msg='[nav] Done — full navigation stack running'),
+                LogInfo(msg='[nav] Done — navigation stack started. '
+                            'Verify with: ros2 topic hz /slam/pose'),
             ],
         ),
     ])

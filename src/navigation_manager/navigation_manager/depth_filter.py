@@ -31,12 +31,12 @@ MAX_DEPTH = 6.0
 SUBSAMPLE = 4
  
 # ── IMU gate ──────────────────────────────────────────────────────
-MAX_YAW_RATE   = 0.20   # rad/s
-MAX_PITCH_RATE = 0.20
-MAX_ROLL_RATE  = 0.20
+MAX_YAW_RATE   = 0.35   # rad/s
+MAX_PITCH_RATE = 0.35
+MAX_ROLL_RATE  = 0.35
  
  
-def _make_pc2(pts, stamp, frame_id='oakd_lite_link'):
+def _make_pc2(pts, stamp, frame_id='base_link'):
     msg = PointCloud2()
     msg.header.stamp    = stamp
     msg.header.frame_id = frame_id

@@ -164,45 +164,36 @@ class GlobalPlanner(Node):
             self.get_logger().error(f'Map load error: {e}')
  
     def _create_auto_map(self):
-        if self.current_pose is None:
-            return False
- 
-        all_points = list(self.all_goals)
-        all_points.append((
-            self.current_pose.pose.position.x,
-            self.current_pose.pose.position.y))
- 
-        if len(all_points) < 2:
-            return False
- 
-        xs = [p[0] for p in all_points]
-        ys = [p[1] for p in all_points]
-        min_x = min(xs) - MAP_PADDING
-        max_x = max(xs) + MAP_PADDING
-        min_y = min(ys) - MAP_PADDING
-        max_y = max(ys) + MAP_PADDING
- 
-        self.map_origin_x = min_x
-        self.map_origin_y = min_y
+        # Fixed corridor map: 220×40 cells at 0.2m = 44m × 8m, origin (-1, -1)
+        self.map_origin_x   = -1.0
+        self.map_origin_y   = -1.0
         self.map_resolution = COARSE_RESOLUTION
-        self.map_width  = max(1, int((max_x - min_x) / COARSE_RESOLUTION))
-        self.map_height = max(1, int((max_y - min_y) / COARSE_RESOLUTION))
- 
+        self.map_width      = 220
+        self.map_height     = 40
+
         self.global_map = np.zeros(
             (self.map_height, self.map_width), dtype=np.uint8)
- 
+
         self.global_map[0, :]  = 1
         self.global_map[-1, :] = 1
         self.global_map[:, 0]  = 1
         self.global_map[:, -1] = 1
- 
+
+        if self.live_costmap is not None:
+            cm = self.live_costmap
+            occ = cm['grid']
+            cy_idx, cx_idx = np.where(occ != 0)
+            if len(cy_idx) > 0:
+                wx = cm['origin_x'] + (cx_idx + 0.5) * cm['res']
+                wy = cm['origin_y'] + (cy_idx + 0.5) * cm['res']
+                gx = ((wx - self.map_origin_x) / self.map_resolution).astype(int)
+                gy = ((wy - self.map_origin_y) / self.map_resolution).astype(int)
+                valid = ((gx >= 0) & (gx < self.map_width) &
+                         (gy >= 0) & (gy < self.map_height))
+                self.global_map[gy[valid], gx[valid]] = 1
+
         self._inflate_map()
         self.map_loaded = True
- 
-        self.get_logger().info(
-            f'Auto-map created: {self.map_width}x{self.map_height} '
-            f'({(max_x-min_x):.1f}m x {(max_y-min_y):.1f}m) '
-            f'origin=({min_x:.1f},{min_y:.1f})')
         return True
  
     def _inflate_map(self):
@@ -224,16 +215,16 @@ class GlobalPlanner(Node):
         gx = msg.pose.position.x
         gy = msg.pose.position.y
         self.all_goals.append((gx, gy))
- 
+
         if self.goal is not None:
             dx = gx - self.goal.pose.position.x
             dy = gy - self.goal.pose.position.y
-            if math.sqrt(dx * dx + dy * dy) < SAME_GOAL_EPS:
+            if math.sqrt(dx*dx + dy*dy) < SAME_GOAL_EPS:
                 return
- 
+
         self.goal = msg
         self.last_path = None
-        self.get_logger().info(f'New goal: ({gx:.2f}, {gy:.2f}, {msg.pose.position.z:.2f})')
+        self.get_logger().info(f'New goal: ({gx:.2f}, {gy:.2f})')
  
     def nav_active_cb(self, msg):
         self.nav_active = msg.data
@@ -251,7 +242,6 @@ class GlobalPlanner(Node):
         h = msg.info.height
         w = msg.info.width
         data = np.array(msg.data, dtype=np.int8).reshape(h, w)
-        # Mark occupied cells (value > 50)
         occupied = (data > 50).astype(np.uint8)
         self.live_costmap = {
             'grid':     occupied,
@@ -261,7 +251,14 @@ class GlobalPlanner(Node):
             'width':    w,
             'height':   h,
         }
-        self.costmap_updated = True  # throttled in periodic_check
+        self.costmap_updated = True
+        if (self.nav_active and not self.emergency and
+                self.current_pose is not None and self.goal is not None and
+                self.check_path_blocked()):
+            self.get_logger().info('Path blocked by new obstacle — replanning')
+            now = self.get_clock().now().nanoseconds * 1e-9
+            self.plan()
+            self.last_plan_time = now
 
     # === Coordinate transforms ===================================
  
@@ -292,7 +289,7 @@ class GlobalPlanner(Node):
             cx = int((wx - cm['origin_x']) / cm['res'])
             cy = int((wy - cm['origin_y']) / cm['res'])
             # Check inflation radius in costmap cells
-            inflation = max(1, int(0.5 / cm['res']))
+            inflation = max(1, int(0.8 / cm['res']))
             for ddx in range(-inflation, inflation+1):
                 for ddy in range(-inflation, inflation+1):
                     nx, ny = cx + ddx, cy + ddy
@@ -460,8 +457,7 @@ class GlobalPlanner(Node):
         if gz < 0.5 or gz > 4.0:
             gz = DEFAULT_ALTITUDE
  
-        if not self.map_loaded:
-            self._create_auto_map()
+        self._create_auto_map()  # always rebuild with latest costmap
  
         waypoints_3d = None
         if self.map_loaded and self.inflated_map is not None:
@@ -522,7 +518,7 @@ class GlobalPlanner(Node):
                 f'goal=({path_msg.poses[-1].pose.position.x:.2f},'
                 f'{path_msg.poses[-1].pose.position.y:.2f})')
             self.path_pub.publish(path_msg)
-            self.last_path = path_msg
+        self.last_path = path_msg
 
         self.local_stuck = False
  
@@ -551,38 +547,56 @@ class GlobalPlanner(Node):
         msg.data = data.flatten().tolist()
         self.map_viz_pub.publish(msg)
  
+    # === Path blocked check =======================================
+
+    def check_path_blocked(self):
+        """Return True if any waypoint in last_path is occupied in the live costmap."""
+        if self.last_path is None or self.live_costmap is None:
+            return False
+        cm = self.live_costmap
+        for pose in self.last_path.poses:
+            wx = pose.pose.position.x
+            wy = pose.pose.position.y
+            cx = int((wx - cm['origin_x']) / cm['res'])
+            cy = int((wy - cm['origin_y']) / cm['res'])
+            if 0 <= cx < cm['width'] and 0 <= cy < cm['height']:
+                if cm['grid'][cy, cx] == 1:
+                    return True
+        return False
+
     # === Periodic check ===========================================
- 
+
     def periodic_check(self):
+        self.get_logger().warn(
+            f'PERIODIC: emergency={self.emergency} '
+            f'nav_active={self.nav_active} '
+            f'pose={self.current_pose is not None} '
+            f'goal={self.goal.pose.position.x:.1f},{self.goal.pose.position.y:.1f} '
+            f'last_path={self.last_path is not None}',
+            throttle_duration_sec=2.0)
+
         if self.emergency:
             return
         if not self.nav_active:
             return
         if self.current_pose is None or self.goal is None:
             return
- 
-        now = self.get_clock().now().nanoseconds * 1e-9
- 
+
+        # Goal reached → clear path so next goal triggers replan
+        if self.last_path is not None:
+            dx = self.current_pose.pose.position.x - self.goal.pose.position.x
+            dy = self.current_pose.pose.position.y - self.goal.pose.position.y
+            if math.sqrt(dx*dx + dy*dy) < GOAL_REACHED_DIST:
+                self.last_path = None
+
+        # Plan if no path
         if self.last_path is None:
             self.plan()
-            self.last_plan_time = now
-            return
- 
-        if self.local_stuck:
-            self.get_logger().info('Replanning due to local planner stuck')
-            self.plan()
-            self.last_plan_time = now
-            return
- 
-        if self.costmap_updated and (now - self.last_plan_time) > REPLAN_INTERVAL:
-            self.costmap_updated = False
-            self.plan()
-            self.last_plan_time = now
             return
 
-        if (now - self.last_plan_time) > REPLAN_INTERVAL:
+        # Replan if stuck
+        if self.local_stuck:
             self.plan()
-            self.last_plan_time = now
  
  
 def _sign(x):

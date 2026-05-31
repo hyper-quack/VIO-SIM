@@ -1,0 +1,10 @@
+digraph G {
+"odom" -> "base_link"[label=" Broadcaster: default_authority\nAverage rate: 101.596\nBuffer length: 5.01\nMost recent transform: 1780251608.95201\nOldest transform: 1780251603.941992\n"];
+"map" -> "odom"[label=" Broadcaster: default_authority\nAverage rate: 20.202\nBuffer length: 4.95\nMost recent transform: 1780251609.004939\nOldest transform: 1780251604.054943\n"];
+"base_link" -> "adafruit_9dof_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"base_link" -> "oakd_lite_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1780251608.95574"[ shape=plaintext ] ;
+}->"map";
+}

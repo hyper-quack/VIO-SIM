@@ -43,9 +43,6 @@ CAM_X =  0.01233
 CAM_Y =  0.0375
 CAM_Z =  0.01878
 
-# ── Sliding window ────────────────────────────────────────────────
-WINDOW_RADIUS      = 12.0
-
 # ── Voxel resolution ─────────────────────────────────────────────
 VOXEL_SIZE         = 0.20
 
@@ -71,8 +68,8 @@ Z_MAX                 = 4.0
 
 # ── Costmap ───────────────────────────────────────────────────────
 COSTMAP_RESOLUTION = 0.10
-COSTMAP_WIDTH      = 200
-COSTMAP_HEIGHT     = 120
+COSTMAP_WIDTH      = 220
+COSTMAP_HEIGHT     = 80
 COSTMAP_Z_MIN      = 0.0
 COSTMAP_Z_MAX      = 4.0
 
@@ -81,9 +78,6 @@ POSE_HISTORY_SIZE  = 100
 
 # ── Update rate ───────────────────────────────────────────────────
 UPDATE_RATE        = 10.0
-
-# ── Pruning ───────────────────────────────────────────────────────
-PRUNE_INTERVAL     = 1.0
 
 
 class VoxelData:
@@ -156,6 +150,7 @@ class OctomapManager(Node):
             history=HistoryPolicy.KEEP_LAST, depth=1)
 
         self.voxels = {}
+        self.free_counts = {}
         self.pose_history = deque(maxlen=POSE_HISTORY_SIZE)
 
         self.drone_x     = None
@@ -201,8 +196,6 @@ class OctomapManager(Node):
             '/debug/world',
             10
         )
-        self.last_prune_time = 0.0
-
         self.force_update_active  = False
         self.force_update_counter = 0
 
@@ -234,8 +227,7 @@ class OctomapManager(Node):
         self.create_timer(1.0 / UPDATE_RATE, self.update_and_publish)
 
         self.get_logger().info(
-            f'OctomapManager started ✓ (sliding window mode) '
-            f'voxel={VOXEL_SIZE}m window={WINDOW_RADIUS}m')
+            f'OctomapManager started ✓  voxel={VOXEL_SIZE}m')
 
     # ─────────────────────────────────────────────────────────────
     # Callbacks
@@ -477,9 +469,11 @@ class OctomapManager(Node):
         # DEBUG RAW CLOUD
         # ─────────────────────────────────────────────────────────
 
+        # cam→body: body_x=cam_z (fwd), body_y=-cam_x (left), body_z=-cam_y (up)
+        _raw_body = np.stack([cam_pts[:, 2], -cam_pts[:, 0], -cam_pts[:, 1]], axis=1)
         self.publish_debug_cloud(
             self.raw_pub,
-            cam_pts,
+            _raw_body,
             frame='base_link'
         )
 
@@ -584,16 +578,6 @@ class OctomapManager(Node):
         if len(world_x) == 0:
             return
 
-        # ── Rolling window ────────────────────────────────────────
-        dist_3d = np.sqrt((world_x-px)**2 + (world_y-py)**2 + (world_z-alt_z)**2)
-        window  = dist_3d <= WINDOW_RADIUS
-        world_x = world_x[window]
-        world_y = world_y[window]
-        world_z = world_z[window]
-        dist_2d = dist_2d[window]
-        if len(world_x) == 0:
-            return
-
         # ── Speed scale ───────────────────────────────────────────
         scale     = _speed_scale(self.drone_speed)
         mark_raw  = MARK_INCREMENT * self.trust_weight
@@ -644,6 +628,34 @@ class OctomapManager(Node):
             if vd.stable_evidence >= HIGH_CONF_THRESHOLD:
                 vd.high_confidence = True
 
+        # ── Free space clearing ───────────────────────────────────
+        cos_y = math.cos(yaw)
+        sin_y = math.sin(yaw)
+        to_delete = []
+        for vkey, vd in self.voxels.items():
+            if not vd.confirmed:
+                continue
+            dx = vd.world_x - px
+            dy = vd.world_y - py
+            if math.sqrt(dx*dx + dy*dy) > 6.0:
+                continue
+            bf =  cos_y*dx + sin_y*dy   # forward component in body frame
+            bs = -sin_y*dx + cos_y*dy   # side component in body frame
+            dz =  vd.world_z - alt_z
+            if bf <= 0.1:
+                continue
+            if abs(bs) / bf > 1.0 or abs(dz) / bf > 0.75:
+                continue
+            if vkey in seen_voxels:
+                self.free_counts[vkey] = 0
+            else:
+                self.free_counts[vkey] = self.free_counts.get(vkey, 0) + 1
+                if self.free_counts[vkey] >= 30:
+                    to_delete.append(vkey)
+        for vkey in to_delete:
+            del self.voxels[vkey]
+            self.free_counts.pop(vkey, None)
+
         # ── Safety distances ──────────────────────────────────────
         cos_y     = math.cos(-yaw)
         sin_y     = math.sin(-yaw)
@@ -676,36 +688,10 @@ class OctomapManager(Node):
             throttle_duration_sec=3.0)
 
     # ─────────────────────────────────────────────────────────────
-    # Sliding window prune
-    # ─────────────────────────────────────────────────────────────
-
-    def _prune_voxels(self):
-        """Remove voxels beyond WINDOW_RADIUS from drone."""
-        if self.drone_x is None:
-            return
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if now - self.last_prune_time < PRUNE_INTERVAL:
-            return
-        self.last_prune_time = now
-
-        keys_to_remove = []
-        for vkey, vd in self.voxels.items():
-            dx = vd.world_x - self.drone_x
-            dy = vd.world_y - self.drone_y
-            dist_2d = math.sqrt(dx*dx + dy*dy)
-
-            if dist_2d > WINDOW_RADIUS:
-                keys_to_remove.append(vkey)
-
-        for k in keys_to_remove:
-            del self.voxels[k]
-
-    # ─────────────────────────────────────────────────────────────
     # Publishers
     # ─────────────────────────────────────────────────────────────
 
     def update_and_publish(self):
-        self._prune_voxels()
         self._publish_costmap()
         self._publish_voxel_map()
         self._publish_distances()
@@ -714,8 +700,8 @@ class OctomapManager(Node):
         """Costmap uses confirmed voxels — frozen positions."""
         if self.drone_x is None:
             return
-        origin_x = self.drone_x - (COSTMAP_WIDTH  * COSTMAP_RESOLUTION) / 2.0
-        origin_y = self.drone_y - (COSTMAP_HEIGHT * COSTMAP_RESOLUTION) / 2.0
+        origin_x = -1.0
+        origin_y = -1.0
         grid = np.zeros((COSTMAP_HEIGHT, COSTMAP_WIDTH), dtype=np.int8)
 
         for vkey, vd in self.voxels.items():

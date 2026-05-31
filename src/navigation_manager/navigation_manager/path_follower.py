@@ -57,7 +57,7 @@ class PathFollower(Node):
         self.last_path_len     = 0
 
         # Subscribers
-        self.create_subscription(Path,        '/planned_path',      self.path_cb,      10)
+        self.create_subscription(Path,        '/global_path',       self.path_cb,      10)
         self.create_subscription(PoseStamped, '/current_pose',      self.pose_cb,      qos)
         self.create_subscription(Bool,        '/emergency_stop',    self.emergency_cb, 10)
         self.create_subscription(Bool,        '/navigation_active', self.active_cb,    10)
