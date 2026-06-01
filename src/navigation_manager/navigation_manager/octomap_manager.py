@@ -90,6 +90,7 @@ class VoxelData:
         'world_x',
         'world_y',
         'world_z',
+        'free_evidence',
     ]
 
     def __init__(self):
@@ -101,6 +102,7 @@ class VoxelData:
         self.world_x         = 0.0
         self.world_y         = 0.0
         self.world_z         = 0.0
+        self.free_evidence   = 0.0
 
 
 def _wrap_angle(a):
@@ -628,33 +630,54 @@ class OctomapManager(Node):
             if vd.stable_evidence >= HIGH_CONF_THRESHOLD:
                 vd.high_confidence = True
 
-        # ── Free space clearing ───────────────────────────────────
+        # ── Free space clearing (evidence-based) ──────────────────
         cos_y = math.cos(yaw)
         sin_y = math.sin(yaw)
-        to_delete = []
-        for vkey, vd in self.voxels.items():
+
+        for vkey, vd in list(self.voxels.items()):
             if not vd.confirmed:
                 continue
             dx = vd.world_x - px
             dy = vd.world_y - py
-            if math.sqrt(dx*dx + dy*dy) > 6.0:
+            dist = math.sqrt(dx*dx + dy*dy)
+
+            # Only check voxels within 6m range
+            if dist > 6.0:
                 continue
-            bf =  cos_y*dx + sin_y*dy   # forward component in body frame
-            bs = -sin_y*dx + cos_y*dy   # side component in body frame
+
+            # Body frame projection
+            bf =  cos_y*dx + sin_y*dy    # forward
+            bs = -sin_y*dx + cos_y*dy    # side
             dz =  vd.world_z - alt_z
+
+            # Must be in front
             if bf <= 0.1:
                 continue
-            if abs(bs) / bf > 1.0 or abs(dz) / bf > 0.75:
+
+            # Must be within camera FOV (OAK-D ~70deg H, ~55deg V)
+            if abs(bs) / bf > 0.6 or abs(dz) / bf > 0.5:
                 continue
+
+            # Voxel is in camera FOV — check if still observed
             if vkey in seen_voxels:
-                self.free_counts[vkey] = 0
+                # Still seen as obstacle — DECAY free evidence
+                vd.free_evidence = max(0.0, vd.free_evidence - MARK_INCREMENT * 2)
             else:
-                self.free_counts[vkey] = self.free_counts.get(vkey, 0) + 1
-                if self.free_counts[vkey] >= 30:
-                    to_delete.append(vkey)
-        for vkey in to_delete:
-            del self.voxels[vkey]
-            self.free_counts.pop(vkey, None)
+                # Not seen — accumulate free evidence (speed-scaled)
+                free_increment = MARK_INCREMENT * scale * self.trust_weight
+                vd.free_evidence = min(MAX_EVIDENCE, vd.free_evidence + free_increment)
+
+            # Only delete when free evidence exceeds threshold
+            # AND sustained for enough frames
+            free_count = self.free_counts.get(vkey, 0)
+            if vd.free_evidence >= CONFIRM_THRESHOLD:
+                self.free_counts[vkey] = free_count + 1
+                if free_count + 1 >= CONSISTENCY_FRAMES:
+                    del self.voxels[vkey]
+                    self.free_counts.pop(vkey, None)
+            else:
+                # Reset frame counter if evidence dropped
+                self.free_counts[vkey] = 0
 
         # ── Safety distances ──────────────────────────────────────
         cos_y     = math.cos(-yaw)
