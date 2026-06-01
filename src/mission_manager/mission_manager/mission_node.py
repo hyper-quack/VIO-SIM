@@ -213,6 +213,9 @@ class MissionManager(Node):
     def goal_raw_callback(self, msg):
         self.raw_goal_x = float(msg.pose.position.x)
         self.raw_goal_y = float(msg.pose.position.y)
+        self.get_logger().info(
+            f'[MM_RAW] goal_raw_callback FIRED '
+            f'raw=({self.raw_goal_x:.2f},{self.raw_goal_y:.2f}) state={self.state}')
         if self.state == self.STATE_PLAN_PATH:
             self.nav_goal_received = True
 

@@ -118,33 +118,40 @@ class SafetyLayer(Node):
         des_vy = self.desired_velocity.twist.linear.y
         des_vz = self.desired_velocity.twist.linear.z
 
-        # A) Repulsive forces in body frame (x=forward, y=left)
-        rep_x = 0.0
-        rep_y = 0.0
-
-        if front_dist < self.REPULSE_RANGE:
-            rep_x -= self.REPULSE_GAIN * (1.0/front_dist - 1.0/self.REPULSE_RANGE)
-        if left_dist < self.REPULSE_RANGE:
-            rep_y -= self.REPULSE_GAIN * (1.0/left_dist - 1.0/self.REPULSE_RANGE)
-        if right_dist < self.REPULSE_RANGE:
-            rep_y += self.REPULSE_GAIN * (1.0/right_dist - 1.0/self.REPULSE_RANGE)
-
-        # B) Body → world frame
+        # A/B) Body → world frame helpers
         cos_y = math.cos(self.drone_yaw)
         sin_y = math.sin(self.drone_yaw)
-        rep_world_x = cos_y*rep_x - sin_y*rep_y
-        rep_world_y = sin_y*rep_x + cos_y*rep_y
-
-        # C) Strip parallel component — keep only perpendicular to desired velocity
         att_norm = math.sqrt(des_vx**2 + des_vy**2)
-        if att_norm > 0.01:
-            dot = rep_world_x*(des_vx/att_norm) + rep_world_y*(des_vy/att_norm)
-            rep_world_x -= dot * (des_vx/att_norm)
-            rep_world_y -= dot * (des_vy/att_norm)
 
-        # D) Blend repulsion into desired velocity
-        safe_vx = des_vx + rep_world_x
-        safe_vy = des_vy + rep_world_y
+        # C) For SIDE forces only, strip parallel component.
+        #    Front repulsion keeps its full backward push.
+        side_rep_x = 0.0
+        side_rep_y = 0.0
+        if left_dist < self.REPULSE_RANGE:
+            side_rep_y -= self.REPULSE_GAIN * (1.0/left_dist - 1.0/self.REPULSE_RANGE)
+        if right_dist < self.REPULSE_RANGE:
+            side_rep_y += self.REPULSE_GAIN * (1.0/right_dist - 1.0/self.REPULSE_RANGE)
+
+        # Body → world for side forces
+        side_world_x = cos_y * side_rep_x - sin_y * side_rep_y
+        side_world_y = sin_y * side_rep_x + cos_y * side_rep_y
+
+        # Strip parallel from side forces only
+        if att_norm > 0.01:
+            dot = side_world_x*(des_vx/att_norm) + side_world_y*(des_vy/att_norm)
+            side_world_x -= dot * (des_vx/att_norm)
+            side_world_y -= dot * (des_vy/att_norm)
+
+        # Front repulsion: full backward force (no parallel stripping)
+        front_rep_x = 0.0
+        if front_dist < self.REPULSE_RANGE:
+            front_rep_x -= self.REPULSE_GAIN * (1.0/front_dist - 1.0/self.REPULSE_RANGE)
+        front_world_x = cos_y * front_rep_x
+        front_world_y = sin_y * front_rep_x
+
+        # D) Blend both into desired velocity
+        safe_vx = des_vx + front_world_x + side_world_x
+        safe_vy = des_vy + front_world_y + side_world_y
         safe_vz = des_vz
 
         # E) Front emergency hard stop
@@ -171,6 +178,8 @@ class SafetyLayer(Node):
             safe_vy = sin_y*body_vx
 
         # Log when repulsion is active
+        rep_world_x = front_world_x + side_world_x
+        rep_world_y = front_world_y + side_world_y
         if abs(rep_world_x) > 0.1 or abs(rep_world_y) > 0.1:
             self.get_logger().info(
                 f'APF redirect: rep=({rep_world_x:.2f},{rep_world_y:.2f}) '

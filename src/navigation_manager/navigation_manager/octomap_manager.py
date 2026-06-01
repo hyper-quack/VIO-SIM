@@ -672,9 +672,9 @@ class OctomapManager(Node):
             by = -sin_y*(world_x[i]-px) + cos_y*(world_y[i]-py)
             d  = dist_2d[i] if i < len(dist_2d) else float('inf')
             if bx > 0:
-                if by < -0.15:  left_min  = min(left_min,  d)
-                elif by > 0.15: right_min = min(right_min, d)
-                else:           front_min = min(front_min, d)
+                if by > 0.15:    left_min  = min(left_min,  d)
+                elif by < -0.15: right_min = min(right_min, d)
+                else:            front_min = min(front_min, d)
 
         self.depth_front = front_min
         self.depth_left  = left_min

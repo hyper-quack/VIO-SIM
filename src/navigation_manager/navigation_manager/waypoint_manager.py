@@ -110,6 +110,9 @@ class WaypointManager(Node):
             return
 
         wp = self.waypoints[self.current_idx]
+        self.get_logger().info(
+            f'[WPM_SEND] send_next_goal FIRED idx={self.current_idx} '
+            f"target=({wp['x']},{wp['y']})")
         goal = PoseStamped()
         goal.header.stamp    = self.get_clock().now().to_msg()
         goal.header.frame_id = 'odom'

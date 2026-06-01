@@ -73,6 +73,12 @@ class PathFollower(Node):
 
     def path_cb(self, msg):
         if not msg.poses:
+            # Empty path — pure follower has nothing to track. Hold position.
+            self.path = []
+            self.get_logger().warn(
+                '[PF] received empty path — no valid path, holding position',
+                throttle_duration_sec=1.0)
+            self.stop()
             return
 
         new_end_x = msg.poses[-1].pose.position.x
@@ -180,6 +186,9 @@ class PathFollower(Node):
             return
 
         if self.current_idx >= len(self.path):
+            self.get_logger().warn(
+                f'[PF_IDLE] idx={self.current_idx} >= len(path)={len(self.path)} '
+                f'— stopping', throttle_duration_sec=1.0)
             self.stop()
             return
 
@@ -203,7 +212,26 @@ class PathFollower(Node):
 
         dist_to_final = self.dist_xy(final_goal)
 
+        # Publish /goal_reached once when the final waypoint is reached.
+        if (self.current_idx >= len(self.path) - 1 and
+                dist_to_final < self.goal_radius and
+                self.dist_z(final_goal) < self.goal_radius_z and
+                not self.goal_reached_sent):
+            self.goal_reached_sent = True
+            reached = Bool()
+            reached.data = True
+            self.reached_pub.publish(reached)
+            self.get_logger().info(
+                f'[PF] goal_reached — final waypoint '
+                f'({final_goal.pose.position.x:.2f},{final_goal.pose.position.y:.2f})')
+
         if norm_xy < 0.01 and abs(dz) < 0.05:
+            if self.current_idx >= len(self.path) - 1:
+                self.get_logger().warn(
+                    f'[PF_IDLE] reached LAST waypoint idx={self.current_idx}/'
+                    f'{len(self.path)} end=({final_goal.pose.position.x:.2f},'
+                    f'{final_goal.pose.position.y:.2f}) — going idle',
+                    throttle_duration_sec=1.0)
             self.stop()
             return
 
