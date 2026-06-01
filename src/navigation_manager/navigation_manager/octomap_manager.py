@@ -47,23 +47,23 @@ CAM_Z =  0.01878
 VOXEL_SIZE         = 0.20
 
 # ── Temporal consistency ──────────────────────────────────────────
-CONSISTENCY_FRAMES = 60
+CONSISTENCY_FRAMES = 30
 
 # ── Evidence ──────────────────────────────────────────────────────
 MARK_INCREMENT      = 8.0
-CONFIRM_THRESHOLD   = 300.0
+CONFIRM_THRESHOLD   = 150.0
 HIGH_CONF_THRESHOLD = 150.0
 MAX_EVIDENCE        = 600.0
 
 # ── Speed scale thresholds ────────────────────────────────────────
-SPEED_FULL   = 0.10
-SPEED_HALF   = 0.20
-SPEED_LOW    = 0.40
+SPEED_FULL   = 0.30
+SPEED_HALF   = 0.60
+SPEED_LOW    = 1.00
 
 # ── Safety filtering ──────────────────────────────────────────────
 SELF_EXCLUSION_RADIUS = 0.8
 MIN_POINTS_PER_FRAME  = 20
-Z_MIN                 = 0.0
+Z_MIN                 = 0.3
 Z_MAX                 = 4.0
 
 # ── Costmap ───────────────────────────────────────────────────────

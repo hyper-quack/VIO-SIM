@@ -377,7 +377,7 @@ class MissionManager(Node):
             self.publish_setpoint(self.current_x, self.current_y, self.current_z)
 
             # 100 ticks × 0.02 s = 2 s minimum streaming before any commands.
-            if self.offboard_counter >= 100:
+            if self.offboard_counter >= 50:
                 self.state = self.STATE_WAIT_EKF
                 self.wait_counter = 0
                 self.get_logger().info('Attente stabilisation EKF2...')
@@ -393,7 +393,7 @@ class MissionManager(Node):
                 throttle_duration_sec=1.0)
 
             # 200 ticks × 0.02 s = 4 s — EKF/VIO should be fully converged.
-            if self.wait_counter >= 200:
+            if self.wait_counter >= 100:
                 self.get_logger().info('Envoi commande mode Offboard...')
                 self.send_command(176, 1.0, 6.0)   # MAV_CMD_DO_SET_MODE, offboard
                 self.arm_counter = 0
@@ -452,7 +452,7 @@ class MissionManager(Node):
             self.get_logger().info(
                 f'Construction carte... {self.map_build_counter}/250 alt={self.altitude_m:.2f}m',
                 throttle_duration_sec=2.0)
-            if self.map_build_counter >= 250:
+            if self.map_build_counter >= 100:
                 self.get_logger().info('Carte construite — envoi goal + planification...')
                 self._publish_goal()
                 self.nav_goal_received = False
@@ -475,7 +475,7 @@ class MissionManager(Node):
                 f'goal_ok={self.nav_goal_received}',
                 throttle_duration_sec=1.0)
 
-            if self.plan_counter >= 150 and self.nav_goal_received:  # 150 × 0.02 s = 3 s
+            if self.plan_counter >= 50 and self.nav_goal_received:  # 50 × 0.02 s = 1 s
                 self.plan_counter = 0
                 self.get_logger().info('Navigation démarrée — suivi PathFollower...')
                 self.state = self.STATE_FOLLOW_PATH

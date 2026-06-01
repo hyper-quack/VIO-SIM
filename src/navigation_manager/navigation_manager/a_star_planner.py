@@ -46,7 +46,7 @@ except ImportError:
 
 # === Parameters =================================================
 VOXEL_SIZE          = 0.2
-INFLATION_RADIUS    = 4       # voxels, inflated along the 6 axis directions
+INFLATION_RADIUS    = 3       # voxels, inflated along the 6 axis directions
 WAYPOINT_SPACING    = 1.0     # m between simplified waypoints (3D)
 SAME_GOAL_EPS       = 0.3
 DEFAULT_ALTITUDE    = 2.0

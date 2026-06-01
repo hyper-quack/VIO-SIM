@@ -25,20 +25,20 @@ class PathFollower(Node):
             depth=10)
 
         # Waypoint acceptance radii
-        self.waypoint_radius   = 0.22
-        self.waypoint_radius_z = 0.15
-        self.goal_radius       = 0.35
-        self.goal_radius_z     = 0.20
+        self.waypoint_radius   = 0.5
+        self.waypoint_radius_z = 0.3
+        self.goal_radius       = 0.6
+        self.goal_radius_z     = 0.3
 
         # Speeds
-        self.max_speed    = 0.22
-        self.cruise_speed = 0.18
-        self.min_speed    = 0.05
-        self.max_vz       = 0.15
-        self.min_vz       = 0.03
+        self.max_speed    = 0.6
+        self.cruise_speed = 0.40
+        self.min_speed    = 0.10
+        self.max_vz       = 0.4
+        self.min_vz       = 0.05
 
         # Smoothing
-        self.vel_alpha   = 0.25
+        self.vel_alpha   = 0.4
         self.filtered_vx = 0.0
         self.filtered_vy = 0.0
         self.filtered_vz = 0.0
