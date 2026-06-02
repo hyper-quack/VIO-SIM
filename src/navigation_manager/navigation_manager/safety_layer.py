@@ -18,9 +18,9 @@ class SafetyLayer(Node):
     """
 
     # ── Repulsion parameters ──────────────────────────────────────────────
-    REPULSE_RANGE  = 0.8   # m — repulsion starts at this distance
-    REPULSE_GAIN   = 1.2   # force magnitude gain
-    EMERGENCY_DIST = 0.5   # m — hard stop (front only)
+    REPULSE_RANGE  = 0.6   # m — repulsion starts at this distance
+    REPULSE_GAIN   = 1.5   # force magnitude gain
+    EMERGENCY_DIST = 0.4   # m — hard stop (front only)
     LATERAL_STOP   = 0.4   # m — cancel lateral velocity toward that wall
 
     def __init__(self):

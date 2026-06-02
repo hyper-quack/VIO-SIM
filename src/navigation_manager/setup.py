@@ -16,6 +16,8 @@ setup(
             glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config', 'openvins_oakd'),
+            glob('config/openvins_oakd/*.yaml')),
         (os.path.join('share', package_name, 'waypoints'),
             glob('waypoints/*.yaml')),
     ],
@@ -35,6 +37,8 @@ setup(
             'slam_frontend    = navigation_manager.slam_frontend:main',
             'depth_filter     = navigation_manager.depth_filter:main',
             'tf_odom_base     = navigation_manager.tf_odom_base:main',
+            'vio_bridge       = navigation_manager.vio_bridge:main',
+            'pose_fusion      = navigation_manager.pose_fusion:main',
         ],
     },
 )

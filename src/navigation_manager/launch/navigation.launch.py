@@ -11,8 +11,8 @@ def generate_launch_description():
     Startup sequence (relative / global when called at T=58s):
       T= 0s / T=58s  octomap_manager, safety_layer, a_star_planner,
                      path_follower, waypoint_manager
-      T= 5s / T=63s  slam_frontend — after stereo bridge is stable,
-                                     before octomap needs corrected poses
+      T= 5s / T=63s  depth_filter, vio_bridge
+                     (slam_frontend DISABLED Session 18 — pose_fusion publishes /slam/corrected_pose)
     """
 
     tf_odom_base = Node(
@@ -57,16 +57,30 @@ def generate_launch_description():
         output='screen',
     )
 
-    slam_frontend = Node(
-        package='navigation_manager',
-        executable='slam_frontend',
-        name='slam_frontend',
-        output='screen',
-    )
+    # DISABLED Session 18 — pose_fusion.py now publishes /slam/corrected_pose
+    # slam_frontend and pose_graph are no longer needed
+    # slam_frontend = Node(
+    #     package='navigation_manager',
+    #     executable='slam_frontend',
+    #     name='slam_frontend',
+    #     output='screen',
+    # )
     depth_filter = Node(
         package='navigation_manager',
         executable='depth_filter',
         name='depth_filter',
+        output='screen',
+    )
+    pose_fusion = Node(
+        package='navigation_manager',
+        executable='pose_fusion',
+        name='pose_fusion',
+        output='screen',
+    )
+    vio_bridge = Node(
+        package='navigation_manager',
+        executable='vio_bridge',
+        name='vio_bridge',
         output='screen',
     )
     return LaunchDescription([
@@ -78,14 +92,18 @@ def generate_launch_description():
         a_star_planner,
         path_follower,
         waypoint_manager,
+        pose_fusion,
 
-        # T=5: slam_frontend — after stereo bridge is confirmed stable
+        # T=5: depth_filter + vio_bridge
+        # DISABLED Session 18 — pose_fusion.py now publishes /slam/corrected_pose
+        # slam_frontend and pose_graph are no longer needed
         TimerAction(
             period=5.0,
             actions=[
-                LogInfo(msg='[nav] T+5  Starting slam_frontend'),
-                slam_frontend,
+                LogInfo(msg='[nav] T+5  Starting depth_filter + vio_bridge'),
+                # slam_frontend,  # DISABLED Session 18
                 depth_filter,
+                vio_bridge,
             ],
         ),
 
