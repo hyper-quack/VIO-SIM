@@ -26,6 +26,7 @@ setup(
     entry_points={
     'console_scripts': [
         'stereo_sync = vio_localization.stereo_sync:main',
+        'odom_to_path = vio_localization.odom_to_path:main',
     ],
 },
 )

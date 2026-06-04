@@ -20,7 +20,6 @@ Flow:
   3. periodic_check (1Hz) is the single decision-maker:
        a. active_goal reached (3D dist < GOAL_REACHED_DIST) -> clear, replan
        b. last_path is None -> plan()
-       c. local_stuck -> plan()
   4. plan() runs 3D A*.
        - success -> publish /global_path
        - failure -> publish empty path (drone hovers), retry next tick.
@@ -45,12 +44,12 @@ except ImportError:
 
 
 # === Parameters =================================================
-VOXEL_SIZE          = 0.2
-INFLATION_RADIUS    = 3       # voxels, inflated along the 6 axis directions
-WAYPOINT_SPACING    = 1.0     # m between simplified waypoints (3D)
+VOXEL_SIZE          = 0.1
+INFLATION_RADIUS    = 5       # voxels, inflated along the 6 axis directions
+WAYPOINT_SPACING    = 0.5     # m between simplified waypoints (3D)
 SAME_GOAL_EPS       = 0.3
 DEFAULT_ALTITUDE    = 2.0
-GOAL_REACHED_DIST   = 0.5     # m, measured in 3D
+GOAL_REACHED_DIST   = 0.8     # m, measured in 3D
 PUBLISH_RATE        = 1.0
 BLOCK_COOLDOWN      = 3.0     # s — min interval between path-blocked replans
 
@@ -68,10 +67,9 @@ CORNER_COST = 1.73205081
 MAX_ITER = 200000
 
 # Search bounds in voxel indices (keeps A* tractable + inside the corridor).
-# World corridor ~ x[-1,44]  y[-1,7]  z[0.2,4.0]  at 0.2m voxels.
-IX_MIN, IX_MAX = -6, 222
-IY_MIN, IY_MAX = -6,  36
-IZ_MIN, IZ_MAX =  1,  20
+IX_MIN, IX_MAX = -10, 220
+IY_MIN, IY_MAX = -10,  80
+IZ_MIN, IZ_MAX =   5,  35
 
 
 class GlobalPlanner(Node):
@@ -91,7 +89,6 @@ class GlobalPlanner(Node):
         self.nav_active   = False
         self.emergency    = False
         self.last_path    = None
-        self.local_stuck  = False
         self.last_blocked_time = 0.0   # cooldown gate for path-blocked replans
 
         # === 3D map (from /voxel_map) ===
@@ -116,7 +113,6 @@ class GlobalPlanner(Node):
         self.create_subscription(PoseStamped, '/goal_pose',      self.goal_cb, 10)
         self.create_subscription(Bool, '/navigation_active',     self.nav_active_cb, 10)
         self.create_subscription(Bool, '/emergency_stop',        self.emergency_cb, 10)
-        self.create_subscription(Bool, '/local_planner_stuck',   self.stuck_cb, 10)
         self.create_subscription(PointCloud2, '/voxel_map',      self.voxel_map_cb, 10)
 
         self.path_pub    = self.create_publisher(Path, '/global_path', 10)
@@ -145,7 +141,9 @@ class GlobalPlanner(Node):
 
     @staticmethod
     def _world_to_voxel(wx, wy, wz):
-        return (int(wx / VOXEL_SIZE), int(wy / VOXEL_SIZE), int(wz / VOXEL_SIZE))
+        return (int(math.floor(wx / VOXEL_SIZE)),
+                int(math.floor(wy / VOXEL_SIZE)),
+                int(math.floor(wz / VOXEL_SIZE)))
 
     @staticmethod
     def _voxel_to_world(ix, iy, iz):
@@ -174,17 +172,13 @@ class GlobalPlanner(Node):
             self.get_logger().info(f'[GOAL_CB] first goal queued ({gx:.2f},{gy:.2f})')
 
         self.goal = msg
+        self.last_path = None  # force replan on next periodic_check
 
     def nav_active_cb(self, msg):
         self.nav_active = msg.data
 
     def emergency_cb(self, msg):
         self.emergency = msg.data
-
-    def stuck_cb(self, msg):
-        if msg.data:
-            self.local_stuck = True
-            self.get_logger().warn('[STUCK] local planner stuck — will replan')
 
     def voxel_map_cb(self, msg):
         """Rebuild the inflated 3D occupancy set from /voxel_map."""
@@ -373,6 +367,38 @@ class GlobalPlanner(Node):
             spaced.append(turning[-1])
         return spaced
 
+    # === Segment / path collision checks ============================
+
+    def _segment_is_free_world(self, p0, p1, step=0.05):
+        x0, y0, z0 = p0
+        x1, y1, z1 = p1
+        dx = x1 - x0
+        dy = y1 - y0
+        dz = z1 - z0
+        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        if dist < 1e-6:
+            return True
+        n = max(1, int(math.ceil(dist / step)))
+        for i in range(n + 1):
+            t = i / n
+            x = x0 + t * dx
+            y = y0 + t * dy
+            z = z0 + t * dz
+            v = self._world_to_voxel(x, y, z)
+            if not self._in_bounds(v):
+                return False
+            if v in self.voxel_grid:
+                return False
+        return True
+
+    def _path_is_free_world(self, points):
+        if points is None or len(points) < 2:
+            return False
+        for i in range(len(points) - 1):
+            if not self._segment_is_free_world(points[i], points[i + 1]):
+                return False
+        return True
+
     # === Cubic B-spline smoothing ===================================
 
     def smooth_path_bspline(self, waypoints_3d, s=0.5, kappa_max=2.0):
@@ -440,11 +466,10 @@ class GlobalPlanner(Node):
             smoothed[0]  = raw_start
             smoothed[-1] = raw_end
 
-            # 6. Obstacle safety check (IJISA Sec. 2.3).
-            for (wx, wy, wz) in smoothed:
-                if self._world_to_voxel(wx, wy, wz) in self.raw_obstacles:
-                    self.get_logger().warn('[SPLINE] collision detected, using raw A* path')
-                    return None
+            # 6. Obstacle safety check against inflated map (IJISA Sec. 2.3).
+            if not self._path_is_free_world(smoothed):
+                self.get_logger().warn('[SPLINE] smoothed path cuts inflated map — using raw A* path')
+                return None
 
             # 7. Curvature check (IJISA Eq. 2): kappa = ||C' x C''|| / ||C'||^3
             d1 = np.array(splev(uu, tck, der=1))   # shape (3, num)
@@ -571,7 +596,6 @@ class GlobalPlanner(Node):
             self.get_logger().debug('[PUBLISH] suppressed — path unchanged')
 
         self.last_path   = path_msg
-        self.local_stuck = False
 
         self._publish_inflated_viz()
         return True
@@ -611,13 +635,23 @@ class GlobalPlanner(Node):
                 self.last_path   = None
                 self.active_goal = None
 
+        # --- Step 1b: New goal queued while active_goal not yet reached ---
+        # waypoint_manager advances at WAYPOINT_RADIUS=1.0 m but the drone may
+        # not have satisfied GOAL_REACHED_DIST yet.  Force a replan so the
+        # drone immediately starts heading to the new waypoint.
+        if (self.active_goal is not None and self.goal is not None):
+            gx_new, gy_new = self._xy(self.goal)
+            gx_old, gy_old = self._xy(self.active_goal)
+            if (abs(gx_new - gx_old) > SAME_GOAL_EPS or
+                    abs(gy_new - gy_old) > SAME_GOAL_EPS):
+                self.get_logger().info(
+                    f'[PERIODIC] goal changed ({gx_old:.1f},{gy_old:.1f}) → '
+                    f'({gx_new:.1f},{gy_new:.1f}) — forcing replan')
+                self.last_path   = None
+                self.active_goal = None
+
         # --- Step 2: Plan if no active path ---
         if self.last_path is None:
-            self.plan()
-            return
-
-        # --- Step 3: Replan if local planner reports stuck ---
-        if self.local_stuck:
             self.plan()
 
     def _publish_empty_path(self):
@@ -630,16 +664,12 @@ class GlobalPlanner(Node):
     # === Path blocked check =========================================
 
     def _check_path_blocked(self):
-        """A path pose lies in an occupied (inflated) voxel -> blocked."""
-        if self.last_path is None:
+        """Any segment of the live path intersects the inflated voxel map."""
+        if self.last_path is None or len(self.last_path.poses) < 2:
             return False
-        for pose in self.last_path.poses:
-            v = self._world_to_voxel(pose.pose.position.x,
-                                     pose.pose.position.y,
-                                     pose.pose.position.z)
-            if v in self.voxel_grid:
-                return True
-        return False
+        pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z)
+               for p in self.last_path.poses]
+        return not self._path_is_free_world(pts)
 
     # === Visualization (debug) ======================================
 

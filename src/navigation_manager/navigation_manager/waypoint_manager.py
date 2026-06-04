@@ -31,9 +31,9 @@ class WaypointManager(Node):
                 data = yaml.safe_load(f)
                 self.waypoints = data['waypoints']
             self.get_logger().info(
-                f'Waypoints chargés : {len(self.waypoints)} points')
+                f'Waypoints loaded: {len(self.waypoints)} points')
         except Exception as e:
-            self.get_logger().error(f'Erreur chargement waypoints: {e}')
+            self.get_logger().error(f'Failed to load waypoints: {e}')
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -55,7 +55,7 @@ class WaypointManager(Node):
         # Timer — check if waypoint reached at 5Hz
         self.create_timer(0.2, self.check_progress)
 
-        self.get_logger().info('Waypoint Manager démarré ✓')
+        self.get_logger().info('WaypointManager started ✓')
 
     def pose_callback(self, msg):
         self.current_pose = msg
@@ -67,7 +67,7 @@ class WaypointManager(Node):
             return
         self.active      = True
         self.current_idx = 0
-        self.get_logger().info('Navigation démarrée ✓')
+        self.get_logger().info('Navigation started ✓')
         self.send_next_goal()
 
     def emergency_callback(self, msg):
@@ -76,7 +76,7 @@ class WaypointManager(Node):
             nav_msg = Bool()
             nav_msg.data = False
             self.nav_active_pub.publish(nav_msg)
-            self.get_logger().error('Navigation arrêtée — emergency stop')
+            self.get_logger().error('Navigation stopped — emergency stop')
 
     def check_progress(self):
         """Check if drone reached current waypoint by position."""
@@ -92,11 +92,11 @@ class WaypointManager(Node):
 
         if dist < WAYPOINT_RADIUS:
             self.get_logger().info(
-                f'Waypoint {self.current_idx+1} atteint (dist={dist:.2f}m)')
+                f'Waypoint {self.current_idx+1} reached (dist={dist:.2f}m)')
             self.current_idx += 1
 
             if self.current_idx >= len(self.waypoints):
-                self.get_logger().info('Mission complète ✓')
+                self.get_logger().info('Mission complete ✓')
                 self.active = False
                 nav_msg = Bool()
                 nav_msg.data = False

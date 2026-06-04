@@ -14,7 +14,6 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image, PointCloud2, PointField, Imu
 from px4_msgs.msg import VehicleOdometry
-from geometry_msgs.msg import PoseStamped
 from cv_bridge import CvBridge
  
 # ── Camera intrinsics (320×240) ───────────────────────────────────
@@ -73,7 +72,6 @@ class DepthFilter(Node):
         self.create_subscription(Image, '/oakd/depth/image', self._depth_cb, qos_best)
         self.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self._odom_cb, qos_px4)
         self.create_subscription(Imu, '/imu/filtered', self._imu_cb, qos_best)
-        self.create_subscription(PoseStamped, '/slam/corrected_pose', self._slam_cb, qos_best)
 
         self.pub = self.create_publisher(PointCloud2, '/pointcloud/camera', 10)
 
@@ -81,11 +79,6 @@ class DepthFilter(Node):
         self.yaw_rate   = 0.0
         self.pitch_rate = 0.0
         self.roll_rate  = 0.0
-
-        # Loop-closure jump detection
-        self.skip_frames  = 0
-        self.last_slam_x  = None
-        self.last_slam_y  = None
 
         self.get_logger().info('DepthFilter started ✓ — camera frame output')
  
@@ -103,19 +96,6 @@ class DepthFilter(Node):
             self.pitch_rate = abs(float(msg.angular_velocity.y))
             self.roll_rate  = abs(float(msg.angular_velocity.x))
 
-    def _slam_cb(self, msg):
-        """Detect loop-closure pose jumps and suppress depth frames."""
-        nx = float(msg.pose.position.x)
-        ny = float(msg.pose.position.y)
-        if self.last_slam_x is not None:
-            jump = math.sqrt((nx - self.last_slam_x)**2 + (ny - self.last_slam_y)**2)
-            if jump > 0.3:
-                self.skip_frames = 30
-                self.get_logger().warn(
-                    f'SLAM jump {jump:.2f} m detected — suppressing {self.skip_frames} depth frames')
-        self.last_slam_x = nx
-        self.last_slam_y = ny
-
     def _depth_cb(self, msg):
         # IMU gate — skip during fast rotation
         if (self.yaw_rate   > MAX_YAW_RATE or
@@ -125,12 +105,6 @@ class DepthFilter(Node):
                 f'IMU gate: y={self.yaw_rate:.2f} p={self.pitch_rate:.2f} r={self.roll_rate:.2f}')
             return
 
-        # Loop-closure gate — skip frames after a SLAM pose jump
-        if self.skip_frames > 0:
-            self.skip_frames -= 1
-            self.get_logger().debug(f'SLAM jump gate: {self.skip_frames} frames remaining')
-            return
- 
         try:
             depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
         except Exception as e:

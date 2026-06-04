@@ -44,7 +44,7 @@ CAM_Y =  0.0375
 CAM_Z =  0.01878
 
 # ── Voxel resolution ─────────────────────────────────────────────
-VOXEL_SIZE         = 0.20
+VOXEL_SIZE         = 0.10
 
 # ── Temporal consistency ──────────────────────────────────────────
 CONSISTENCY_FRAMES = 30
@@ -158,7 +158,6 @@ class OctomapManager(Node):
         self.drone_x     = None
         self.drone_y     = None
         self.drone_z     = 0.0
-        self.drone_yaw   = 0.0
         self.drone_speed = 0.0
         self.lidar_z     = 0.0
 
@@ -181,23 +180,6 @@ class OctomapManager(Node):
         self.depth_front = float('inf')
         self.depth_left  = float('inf')
         self.depth_right = float('inf')
-        self.raw_pub = self.create_publisher(
-            PointCloud2,
-            '/debug/raw',
-            10
-        )
-
-        self.body_pub = self.create_publisher(
-            PointCloud2,
-            '/debug/body',
-            10
-        )
-
-        self.world_pub = self.create_publisher(
-            PointCloud2,
-            '/debug/world',
-            10
-        )
         self.force_update_active  = False
         self.force_update_counter = 0
 
@@ -269,7 +251,6 @@ class OctomapManager(Node):
             self.drone_x   = x
             self.drone_y   = y
             self.drone_z   = z
-            self.drone_yaw = yaw
 
     def lidar_cb(self, msg):
         if msg.ranges and math.isfinite(msg.ranges[0]) and msg.ranges[0] > 0.01:
@@ -294,10 +275,6 @@ class OctomapManager(Node):
         self.drone_x = nx
         self.drone_y = ny
         self.drone_z = nz
-
-        qz = float(msg.pose.orientation.z)
-        qw = float(msg.pose.orientation.w)
-        self.drone_yaw = _wrap_angle(2.0*math.atan2(qz, qw))
 
         if self.last_slam_x_jump is not None:
             jump = math.sqrt((nx - self.last_slam_x_jump)**2 +
@@ -375,60 +352,7 @@ class OctomapManager(Node):
         valid = np.all(np.isfinite(pts), axis=1)
         pts   = pts[valid]
         return pts if len(pts) > 0 else None
-    def publish_debug_cloud(
-        self,
-        pub,
-        pts,
-        frame='odom'
-    ):
 
-        if pts is None or len(pts) == 0:
-            return
-
-        pts = np.asarray(
-            pts,
-            dtype=np.float32
-        )
-
-        msg = PointCloud2()
-
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = frame
-
-        msg.height = 1
-        msg.width = len(pts)
-
-        msg.fields = [
-            PointField(
-                name='x',
-                offset=0,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
-
-            PointField(
-                name='y',
-                offset=4,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
-
-            PointField(
-                name='z',
-                offset=8,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
-        ]
-
-        msg.is_bigendian = False
-        msg.point_step = 12
-        msg.row_step = 12 * len(pts)
-        msg.is_dense = True
-
-        msg.data = pts.tobytes()
-
-        pub.publish(msg)
     # ─────────────────────────────────────────────────────────────
     # Main cloud callback
     # ─────────────────────────────────────────────────────────────
@@ -467,101 +391,19 @@ class OctomapManager(Node):
         if cam_pts is None or len(cam_pts) < MIN_POINTS_PER_FRAME:
             return
 
-        # ─────────────────────────────────────────────────────────
-        # DEBUG RAW CLOUD
-        # ─────────────────────────────────────────────────────────
-
+        # ── Camera → Body frame ───────────────────────────────────
         # cam→body: body_x=cam_z (fwd), body_y=-cam_x (left), body_z=-cam_y (up)
-        _raw_body = np.stack([cam_pts[:, 2], -cam_pts[:, 0], -cam_pts[:, 1]], axis=1)
-        self.publish_debug_cloud(
-            self.raw_pub,
-            _raw_body,
-            frame='base_link'
-        )
+        body_pts = np.stack([cam_pts[:, 2], -cam_pts[:, 0], -cam_pts[:, 1]], axis=1)
 
-       # ─────────────────────────────────────────────────────────
-        # CAMERA → BODY FRAME
-        # ─────────────────────────────────────────────────────────
-
-        body_x =  cam_pts[:, 2]
-        body_y = -cam_pts[:, 0]
-        body_z = -cam_pts[:, 1]
-
-        # DO NOT APPLY CAMERA OFFSETS YET
-        # Gazebo already accounts for sensor placement visually
-
-        body_pts = np.stack(
-            [body_x, body_y, body_z],
-            axis=1
-        )
-
-        # DEBUG BODY CLOUD
-        self.publish_debug_cloud(
-            self.body_pub,
-            body_pts,
-        frame='base_link'
-        )
-
-        # ─────────────────────────────────────────────────────────
-        # YAW DEBUG
-        # ─────────────────────────────────────────────────────────
-
-        self.get_logger().warn(
-            f'YAW={math.degrees(yaw):.1f}',
-            throttle_duration_sec=1.0
-        )
-
-        # ─────────────────────────────────────────────────────────
-        # ROTATION MATRIX
-        # ─────────────────────────────────────────────────────────
-
-        R = _quat_to_rotation_matrix(
-            qw,
-            qx,
-            qy,
-            qz
-        )
-
-        # TEST VERSION
+        # ── Body → NED via PX4 quaternion ────────────────────────
+        R       = _quat_to_rotation_matrix(qw, qx, qy, qz)
         ned_pts = (R.T @ body_pts.T).T
 
-        # ─────────────────────────────────────────────────────────
-        # NED → WORLD
-        # ─────────────────────────────────────────────────────────
+        # ── NED → World ───────────────────────────────────────────
         world_x = -ned_pts[:, 1] + px
         world_y =  ned_pts[:, 0] + py
         world_z =  ned_pts[:, 2] + alt_z
 
-        world_pts = np.stack(
-            [world_x, world_y, world_z],
-            axis=1
-        )
-
-        # ─────────────────────────────────────────────────────────
-        # DEBUG WORLD CLOUD
-        # ─────────────────────────────────────────────────────────
-
-        self.publish_debug_cloud(
-            self.world_pub,
-            world_pts,
-            frame='odom'
-        )
-
-        # ─────────────────────────────────────────────────────────
-        # TIMESTAMP DEBUG
-        # ─────────────────────────────────────────────────────────
-
-        best = min(
-            self.pose_history,
-            key=lambda p: abs(p[0] - ts_ns)
-        )
-
-        dt_ms = abs(best[0] - ts_ns) / 1e6
-
-        self.get_logger().warn(
-            f'SYNC ERROR = {dt_ms:.1f} ms',
-            throttle_duration_sec=1.0
-        )
         # ── Altitude filter ───────────────────────────────────────
         alt_ok  = (world_z >= Z_MIN) & (world_z <= Z_MAX)
         world_x = world_x[alt_ok]
@@ -597,11 +439,11 @@ class OctomapManager(Node):
             seen_voxels.add(vkey)
 
             if vkey not in self.voxels:
-                # New voxel — create
+                # New voxel — create, snapped to grid center
                 vd = VoxelData()
-                vd.world_x = float(world_x[i])
-                vd.world_y = float(world_y[i])
-                vd.world_z = float(world_z[i])
+                vd.world_x = (vkey[0] + 0.5) * VOXEL_SIZE
+                vd.world_y = (vkey[1] + 0.5) * VOXEL_SIZE
+                vd.world_z = (vkey[2] + 0.5) * VOXEL_SIZE
                 self.voxels[vkey] = vd
             else:
                 vd = self.voxels[vkey]
@@ -617,10 +459,10 @@ class OctomapManager(Node):
             vd.raw_evidence    = min(MAX_EVIDENCE, vd.raw_evidence    + mark_raw)
             vd.stable_evidence = min(MAX_EVIDENCE, vd.stable_evidence + mark_stab)
 
-            # Update position only while NOT confirmed
-            vd.world_x = float(world_x[i])
-            vd.world_y = float(world_y[i])
-            vd.world_z = float(world_z[i])
+            # Position is always the grid center — not the raw hit position
+            vd.world_x = (vkey[0] + 0.5) * VOXEL_SIZE
+            vd.world_y = (vkey[1] + 0.5) * VOXEL_SIZE
+            vd.world_z = (vkey[2] + 0.5) * VOXEL_SIZE
 
             # Confirmation
             if vd.hits >= CONSISTENCY_FRAMES and vd.raw_evidence >= threshold:

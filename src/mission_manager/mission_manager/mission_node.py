@@ -11,6 +11,7 @@ from px4_msgs.msg import (
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from std_msgs.msg import Bool
 from sensor_msgs.msg import LaserScan
+from rtabmap_msgs.msg import OdomInfo
 import math
 
 
@@ -91,6 +92,10 @@ class MissionManager(Node):
             TwistStamped, '/safe_velocity',
             self.safe_velocity_callback, qos_default)
 
+        self.odom_info_sub = self.create_subscription(
+            OdomInfo, '/odom_info',
+            self.odom_info_callback, qos_default)
+
         self.emergency_sub = self.create_subscription(
             Bool, '/emergency_stop',
             self.emergency_callback, qos_default)
@@ -135,6 +140,14 @@ class MissionManager(Node):
         self.in_recovery = False
         self.nav_goal_received = False
         self.altitude_m = 0.0
+
+        # VIO quality gate — waits for VIO inliers > 15 before arming.
+        # _vio_info_received stays False if rtabmap is not running (GPS-only),
+        # in which case the guard is bypassed automatically.
+        self._vio_inliers = 0
+        self._vio_info_received = False
+        VIO_INLIERS_MIN = 15
+        self.VIO_INLIERS_MIN = VIO_INLIERS_MIN
 
         self.raw_goal_x = self.GOAL_X
         self.raw_goal_y = self.GOAL_Y
@@ -209,6 +222,10 @@ class MissionManager(Node):
     def mtf01_callback(self, msg):
         if msg.ranges:
             self.altitude_m = float(min(r for r in msg.ranges if r > 0.01))
+
+    def odom_info_callback(self, msg: OdomInfo):
+        self._vio_info_received = True
+        self._vio_inliers = msg.inliers
 
     def goal_raw_callback(self, msg):
         self.raw_goal_x = float(msg.pose.position.x)
@@ -388,13 +405,27 @@ class MissionManager(Node):
 
             self.wait_counter += 1
 
-            self.get_logger().info(
-                f'Attente EKF2... {self.wait_counter}/200',
-                throttle_duration_sec=1.0)
+            # VIO guard: if rtabmap is running, wait until inliers >= 15.
+            # If /odom_info has never arrived (GPS-only mode), bypass the guard.
+            vio_ready = (
+                not self._vio_info_received or
+                self._vio_inliers >= self.VIO_INLIERS_MIN
+            )
 
-            # 200 ticks × 0.02 s = 4 s — EKF/VIO should be fully converged.
-            if self.wait_counter >= 100:
-                self.get_logger().info('Envoi commande mode Offboard...')
+            if self._vio_info_received:
+                self.get_logger().info(
+                    f'Attente EKF2+VIO... ekf={self.wait_counter}/100 '
+                    f'vio_inliers={self._vio_inliers}/{self.VIO_INLIERS_MIN} '
+                    f'vio_ok={vio_ready}',
+                    throttle_duration_sec=1.0)
+            else:
+                self.get_logger().info(
+                    f'Attente EKF2... {self.wait_counter}/100 (GPS-only)',
+                    throttle_duration_sec=1.0)
+
+            # 100 ticks × 0.02 s = 2 s minimum + VIO must be tracking.
+            if self.wait_counter >= 100 and vio_ready:
+                self.get_logger().info('EKF2 stable + VIO OK — Envoi commande mode Offboard...')
                 self.send_command(176, 1.0, 6.0)   # MAV_CMD_DO_SET_MODE, offboard
                 self.arm_counter = 0
                 self.state = self.STATE_ARMING

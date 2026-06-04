@@ -14,10 +14,11 @@ def generate_launch_description():
                                   time lets gz-transport fully establish the
                                   ZMQ subscription before stereo traffic starts.
       T=20s  gz_bridge_stereo  — Stereo cameras.  Starts 15 s after depth is
-                                  confirmed stable.  Stereo is now 320×240 @ 5 Hz
-                                  per camera (~0.75 MB/s total) vs the 6 MB/s
-                                  that caused 15-second exponential-back-off
-                                  depth gaps at the previous 640×480 @ 10 Hz.
+                                  confirmed stable.  Stereo is now 320×240 @ 30 Hz
+                                  per camera (~4.6 MB/s total).  Small frame size
+                                  keeps IPC bursts short so depth heartbeats are
+                                  not blocked (each frame is 76 KB vs 300 KB at
+                                  640×480, clearing the IPC write queue 4× faster).
 
     WHY DEPTH GAPS HAPPENED (historical note):
       gz-transport keeps subscriptions alive via ~5-second ZMQ heartbeats.
@@ -25,10 +26,9 @@ def generate_launch_description():
       shared Unix-domain IPC socket, Gazebo's single publish thread could not
       deliver gz_bridge_depth's heartbeat ACK during the burst.  Gazebo then
       marked the depth subscription dead and gz_bridge_depth re-ran discovery
-      with exponential back-off (1+2+4+8 = 15 s gap).  Three fixes applied:
-        1. Stereo resolution reduced 640×480 → 320×240 (4× less data).
-        2. Stereo frame rate reduced 10 → 5 Hz (2× less frequent).
-        3. gz_bridge_stereo delayed to T=20 s (depth gets 15 s head start).
+      with exponential back-off (1+2+4+8 = 15 s gap).  Two fixes applied:
+        1. Stereo resolution reduced 640×480 → 320×240 (4× less data per frame).
+        2. gz_bridge_stereo delayed to T=20 s (depth gets 15 s head start).
     """
 
     # ── BRIDGE 1: LiDARs + custom IMU ──────────────────────────────────────
@@ -70,7 +70,7 @@ def generate_launch_description():
     )
 
     # ── BRIDGE 3: Stereo cameras ────────────────────────────────────────────
-    # 320×240 @ 5 Hz per camera.  Starts 15 s after depth to avoid IPC
+    # 320×240 @ 30 Hz per camera.  Starts 15 s after depth to avoid IPC
     # contention during depth's gz-transport discovery handshake.
     gz_bridge_stereo = Node(
         package='ros_gz_bridge',
@@ -106,7 +106,7 @@ def generate_launch_description():
         TimerAction(
             period=20.0,
             actions=[
-                LogInfo(msg='[drone] T=20 gz_bridge_stereo (320×240 @ 5Hz)'),
+                LogInfo(msg='[drone] T=20 gz_bridge_stereo (320×240 @ 30Hz)'),
                 gz_bridge_stereo,
             ],
         ),
@@ -115,7 +115,7 @@ def generate_launch_description():
             period=23.0,
             actions=[
                 LogInfo(msg='[drone] Done — verify: ros2 topic hz /oakd/depth/image '
-                            '(~10 Hz) and ros2 topic hz /oakd/left/image (~5 Hz)'),
+                            '(~30 Hz) and ros2 topic hz /oakd/left/image (~30 Hz)'),
             ],
         ),
     ])
