@@ -19,6 +19,7 @@ def generate_launch_description():
         executable='tf_odom_base',
         name='tf_odom_base',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     octomap_manager = Node(
@@ -26,6 +27,7 @@ def generate_launch_description():
         executable='octomap_manager',
         name='octomap_manager',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     safety_layer = Node(
@@ -33,6 +35,7 @@ def generate_launch_description():
         executable='safety_layer',
         name='safety_layer',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     a_star_planner = Node(
@@ -40,6 +43,7 @@ def generate_launch_description():
         executable='a_star_planner',
         name='a_star_planner',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     path_follower = Node(
@@ -47,6 +51,7 @@ def generate_launch_description():
         executable='path_follower',
         name='path_follower',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     waypoint_manager = Node(
@@ -54,6 +59,7 @@ def generate_launch_description():
         executable='waypoint_manager',
         name='waypoint_manager',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     depth_filter = Node(
@@ -61,6 +67,7 @@ def generate_launch_description():
         executable='depth_filter',
         name='depth_filter',
         output='screen',
+        parameters=[{'use_sim_time': True}],   # ADD THIS LINE
     )
 
     pose_fusion = Node(
@@ -68,6 +75,7 @@ def generate_launch_description():
         executable='pose_fusion',
         name='pose_fusion',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     return LaunchDescription([

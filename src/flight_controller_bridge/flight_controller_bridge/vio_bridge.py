@@ -30,6 +30,8 @@ class VIOBridge(Node):
         self._odom_quality = 1
         self._odom_info_received = False  # True once /odom_info arrives at least once
         self._reset_counter = 0           # incremented on each tracking recovery
+        self._odom_lost = True            # rtabmap lost flag; block publishing until tracking
+        self._prev_pos = None             # previous (x, y) for jump rejection
 
         odom_info_topic = self.declare_parameter('odom_info_topic', '/odom_info').value
         odom_topic      = self.declare_parameter('odom_topic',      '/odom').value
@@ -54,6 +56,7 @@ class VIOBridge(Node):
     def _odom_info_cb(self, msg: OdomInfo):
         prev = self._odom_quality
         self._odom_quality = msg.inliers
+        self._odom_lost = msg.lost
 
         if not self._odom_info_received:
             self._odom_info_received = True
@@ -74,10 +77,25 @@ class VIOBridge(Node):
 
     # ── odometry: rtabmap ENU → PX4 NED ─────────────────────────────────────
     def _odom_cb(self, msg: Odometry):
-        # Gate: only block when odom_info explicitly reports lost (inliers=0).
-        # Before odom_info arrives, _odom_quality=1 so we publish immediately.
-        if self._odom_info_received and self._odom_quality == 0:
+        # Gate: block publishing when rtabmap reports lost tracking.
+        if self._odom_lost:
             return
+        # Gate: require a minimum inlier count (was checking == 0 only).
+        if self._odom_quality < 15:
+            return
+
+        # Position jump gate: reject frames that teleport > 1.0 m between
+        # consecutive samples (a sign of a bad VIO estimate).
+        p = msg.pose.pose.position
+        x = float(p.x)
+        y = float(p.y)
+        if self._prev_pos is not None:
+            dx = abs(x - self._prev_pos[0])
+            dy = abs(y - self._prev_pos[1])
+            if dx > 2.0 or dy > 2.0:   # was 1.0
+                self.get_logger().warn(f'VIO jump rejected: dx={dx:.2f} dy={dy:.2f}')
+                return
+        self._prev_pos = (x, y)
 
         vio = VehicleOdometry()
         # timestamp_sample = when the sensor measurement was taken (from rtabmap header)
@@ -87,7 +105,6 @@ class VIOBridge(Node):
         vio.timestamp = self.get_clock().now().nanoseconds // 1000
 
         # Position: ENU (x=East, y=North, z=Up) → NED (x=North, y=East, z=Down)
-        p = msg.pose.pose.position
         vio.position[0] = float(p.y)   # North
         vio.position[1] = float(p.x)   # East
         vio.position[2] = float(-p.z)  # Down

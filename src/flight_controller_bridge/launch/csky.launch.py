@@ -30,6 +30,7 @@ def generate_launch_description():
         output='screen',
         respawn=True,
         respawn_delay=3.0,
+        parameters=[{'use_sim_time': True}],
     )
 
     mission_node = Node(
@@ -37,6 +38,7 @@ def generate_launch_description():
         executable='mission_node',
         name='mission_manager',
         output='screen',
+        parameters=[{'use_sim_time': True}],
     )
 
     return LaunchDescription([

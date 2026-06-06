@@ -102,13 +102,26 @@ def generate_launch_description():
             'qos':                  2,
             'qos_camera_info':      2,
             'Vis/FeatureType':      '6',     # GFTT/BRIEF — fast detector+descriptor
-            'Vis/MaxFeatures':      '100',   # minimal features for 20Hz budget
-            'Vis/MinInliers':       '5',
+            'Vis/MaxFeatures':      '500',   # was 100 — more features = more robust
+            'Vis/MinInliers':       '15',    # was 5 — stricter match acceptance
+            'Vis/InlierDistance':   '0.05',  # was 0.1 — tighter epipolar constraint
             'Vis/EstimationType':   '1',
             'Odom/Strategy':        '1',     # Frame-to-Frame — no map overhead
+            'Odom/ResetCountdown':  '2',     # was 0 — auto-reset after 2 lost frames
             'Odom/ImageDecimation': '1',     # sync already decimates to ~20Hz
             'Odom/GuessMotion':     'true',  # velocity prediction → faster convergence
+            'Odom/GuessSmoothingDelay': '0.1',
+            'Odom/ImageBuffered':   'true',
             'Odom/KeyFrameThr':     '0.5',
+            # Reject correspondences that violate motion model
+            'Vis/EpipolarGeometryVar': '0.01',  # stricter epipolar constraint
+            'Vis/PnPReprojError':   '1.0',   # was 2.0 — tighter reprojection
+            # Feature distribution — force features across whole image not just stripes
+            'GFTT/MinDistance':     '10',    # was 15 — too spread out, not enough features
+            'GFTT/QualityLevel':    '0.01',
+            # Depth filter for features — ignore features on far repetitive walls
+            'Vis/MaxDepth':         '10.0',  # was 5.0 — too restrictive, walls at 3-6m
+            'Vis/MinDepth':         '0.1',   # was 0.3
             'OdomF2M/MaxSize':      '200',
             'approx_sync':          True,
             'sync_queue_size':      10,
@@ -119,6 +132,7 @@ def generate_launch_description():
             ('/right/image_rect',  '/oakd/sync/right/image'),
             ('/left/camera_info',  '/oakd/sync/left/camera_info'),
             ('/right/camera_info', '/oakd/sync/right/camera_info'),
+            ('/odom_sensor_data/image', '/rtabmap/odom_image'),
         ],
         output='screen',
     )

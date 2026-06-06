@@ -134,7 +134,7 @@ class DepthFilter(Node):
         z_cam = d
  
         pts = np.stack([x_cam, y_cam, z_cam], axis=1).astype(np.float32)
-        self.pub.publish(_make_pc2(pts, msg.header.stamp))
+        self.pub.publish(_make_pc2(pts, self.get_clock().now().to_msg()))
  
         self.get_logger().info(
             f'Published {len(pts)} camera-frame points',

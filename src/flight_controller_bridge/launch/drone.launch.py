@@ -31,6 +31,14 @@ def generate_launch_description():
         2. gz_bridge_stereo delayed to T=20 s (depth gets 15 s head start).
     """
 
+    gz_bridge_clock = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='gz_bridge_clock',
+        output='screen',
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+    )
+
     # ── BRIDGE 1: LiDARs + custom IMU ──────────────────────────────────────
     gz_bridge_lidars = Node(
         package='ros_gz_bridge',
@@ -88,6 +96,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        gz_bridge_clock,
+
         # T=0
         LogInfo(msg='[drone] T=0  gz_bridge_lidars + MicroXRCEAgent'),
         gz_bridge_lidars,

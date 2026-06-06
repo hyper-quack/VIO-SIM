@@ -231,7 +231,7 @@ class OctomapManager(Node):
         cosy = 1.0 - 2.0*(qy*qy + qz*qz)
         yaw  = _wrap_angle(math.atan2(siny, cosy) - math.pi/2.0)
 
-        ts_ns = msg.timestamp * 1000
+        ts_ns = self.get_clock().now().nanoseconds
         ts_s  = ts_ns * 1e-9
 
         if self._prev_x is not None and self._prev_ts is not None:
@@ -400,8 +400,14 @@ class OctomapManager(Node):
         ned_pts = (R.T @ body_pts.T).T
 
         # ── NED → World ───────────────────────────────────────────
-        world_x = -ned_pts[:, 1] + px
-        world_y =  ned_pts[:, 0] + py
+        # Camera offset in body frame: 0.132m forward
+        cam_offset_body = np.array([0.12, 0.0, 0.0])
+        cam_offset_ned = R.T @ cam_offset_body
+        cam_offset_world_x = -cam_offset_ned[1]
+        cam_offset_world_y =  cam_offset_ned[0]
+
+        world_x = -ned_pts[:, 1] + px + cam_offset_world_x
+        world_y =  ned_pts[:, 0] + py + cam_offset_world_y
         world_z =  ned_pts[:, 2] + alt_z
 
         # ── Altitude filter ───────────────────────────────────────

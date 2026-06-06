@@ -12,6 +12,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from std_msgs.msg import Bool
 from sensor_msgs.msg import LaserScan
 from rtabmap_msgs.msg import OdomInfo
+from nav_msgs.msg import Odometry
 import math
 
 
@@ -112,6 +113,10 @@ class MissionManager(Node):
             PoseStamped, '/goal_raw',
             self.goal_raw_callback, 10)
 
+        self.create_subscription(
+            Odometry, '/openvins/odomimu',
+            self._openvins_cb, qos_default)
+
         # Mission state
         self.state = self.STATE_IDLE
         self.armed    = False
@@ -148,6 +153,14 @@ class MissionManager(Node):
         self._vio_info_received = False
         VIO_INLIERS_MIN = 15
         self.VIO_INLIERS_MIN = VIO_INLIERS_MIN
+
+        # OpenVINS readiness gate — waits for a stable pose estimate.
+        # _openvins_info_received stays False if OpenVINS is not running,
+        # in which case the guard is bypassed automatically.
+        self._openvins_ready = False
+        self._openvins_info_received = False
+        self._openvins_pos_prev = None
+        self._openvins_stable_count = 0
 
         self.raw_goal_x = self.GOAL_X
         self.raw_goal_y = self.GOAL_Y
@@ -224,8 +237,26 @@ class MissionManager(Node):
             self.altitude_m = float(min(r for r in msg.ranges if r > 0.01))
 
     def odom_info_callback(self, msg: OdomInfo):
-        self._vio_info_received = True
         self._vio_inliers = msg.inliers
+        if msg.inliers > 0:
+            self._vio_info_received = True
+
+    def _openvins_cb(self, msg):
+        self._openvins_info_received = True
+        pos = msg.pose.pose.position
+        if self._openvins_pos_prev is not None:
+            dx = abs(pos.x - self._openvins_pos_prev[0])
+            dy = abs(pos.y - self._openvins_pos_prev[1])
+            dz = abs(pos.z - self._openvins_pos_prev[2])
+            if dx < 0.05 and dy < 0.05 and dz < 0.05:
+                self._openvins_stable_count += 1
+            else:
+                self._openvins_stable_count = 0
+            if self._openvins_stable_count > 50:
+                self._openvins_ready = True
+                self.get_logger().info('OpenVINS initialized and stable ✓',
+                    throttle_duration_sec=5.0)
+        self._openvins_pos_prev = (pos.x, pos.y, pos.z)
 
     def goal_raw_callback(self, msg):
         self.raw_goal_x = float(msg.pose.position.x)
@@ -412,11 +443,15 @@ class MissionManager(Node):
                 self._vio_inliers >= self.VIO_INLIERS_MIN
             )
 
+            # OpenVINS guard: bypass if OpenVINS never published (not running).
+            openvins_ok = (not self._openvins_info_received) or self._openvins_ready
+
             if self._vio_info_received:
                 self.get_logger().info(
                     f'Attente EKF2+VIO... ekf={self.wait_counter}/100 '
                     f'vio_inliers={self._vio_inliers}/{self.VIO_INLIERS_MIN} '
-                    f'vio_ok={vio_ready}',
+                    f'vio_ok={vio_ready} '
+                    f'openvins_ok={openvins_ok}',
                     throttle_duration_sec=1.0)
             else:
                 self.get_logger().info(
@@ -424,7 +459,7 @@ class MissionManager(Node):
                     throttle_duration_sec=1.0)
 
             # 100 ticks × 0.02 s = 2 s minimum + VIO must be tracking.
-            if self.wait_counter >= 100 and vio_ready:
+            if self.wait_counter >= 100 and vio_ready and openvins_ok:
                 self.get_logger().info('EKF2 stable + VIO OK — Envoi commande mode Offboard...')
                 self.send_command(176, 1.0, 6.0)   # MAV_CMD_DO_SET_MODE, offboard
                 self.arm_counter = 0
