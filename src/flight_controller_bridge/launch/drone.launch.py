@@ -49,6 +49,7 @@ def generate_launch_description():
             '/left_lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/right_lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/mtf01/lidar@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+            '/mtf01/optical_flow@px4_msgs/msg/SensorOpticalFlow[px4_msgs.msgs.OpticalFlow',
             '/adafruit/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
         ],
         output='screen',

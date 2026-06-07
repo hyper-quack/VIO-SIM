@@ -19,7 +19,7 @@ class SafetyLayer(Node):
 
     # ── Repulsion parameters ──────────────────────────────────────────────
     REPULSE_RANGE  = 0.5   # m — repulsion starts at this distance
-    REPULSE_GAIN   = 0.6   # force magnitude gain
+    REPULSE_GAIN   = 0.3   # force magnitude gain
     EMERGENCY_DIST = 0.4   # m — hard stop (front only)
     LATERAL_STOP   = 0.4   # m — cancel lateral velocity toward that wall
 

@@ -369,6 +369,32 @@ class GlobalPlanner(Node):
 
     # === Segment / path collision checks ============================
 
+    def _segment_is_free_world_raw(self, p0, p1, step=0.05):
+        x0, y0, z0 = p0
+        x1, y1, z1 = p1
+        dx = x1 - x0; dy = y1 - y0; dz = z1 - z0
+        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        if dist < 1e-6:
+            return True
+        n = max(1, int(math.ceil(dist / step)))
+        for i in range(n + 1):
+            t = i / n
+            x = x0 + t * dx; y = y0 + t * dy; z = z0 + t * dz
+            v = self._world_to_voxel(x, y, z)
+            if not self._in_bounds(v):
+                return False
+            if v in self.raw_obstacles:
+                return False
+        return True
+
+    def _path_is_free_world_raw(self, points):
+        if points is None or len(points) < 2:
+            return False
+        for i in range(len(points) - 1):
+            if not self._segment_is_free_world_raw(points[i], points[i + 1]):
+                return False
+        return True
+
     def _segment_is_free_world(self, p0, p1, step=0.05):
         x0, y0, z0 = p0
         x1, y1, z1 = p1
@@ -466,9 +492,9 @@ class GlobalPlanner(Node):
             smoothed[0]  = raw_start
             smoothed[-1] = raw_end
 
-            # 6. Obstacle safety check against inflated map (IJISA Sec. 2.3).
-            if not self._path_is_free_world(smoothed):
-                self.get_logger().warn('[SPLINE] smoothed path cuts inflated map — using raw A* path')
+            # 6. Obstacle safety check against raw obstacles only (no inflation).
+            if not self._path_is_free_world_raw(smoothed):
+                self.get_logger().warn('[SPLINE] smoothed path cuts real obstacle — using raw A* path')
                 return None
 
             # 7. Curvature check (IJISA Eq. 2): kappa = ||C' x C''|| / ||C'||^3
