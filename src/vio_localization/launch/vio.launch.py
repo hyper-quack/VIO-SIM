@@ -1,6 +1,9 @@
+import os
 from launch import LaunchDescription
-from launch.actions import TimerAction, LogInfo
+from launch.actions import TimerAction, LogInfo, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
@@ -80,6 +83,12 @@ def generate_launch_description():
         output='screen',
         parameters=[{'use_sim_time': True}],
     )
+
+    # OpenVINS MSCKF — started after rtabmap_odom is stable (T+30s).
+    vio_dir = get_package_share_directory('vio_localization')
+    openvins_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(vio_dir, 'launch', 'openvins.launch.py')))
 
     # rtabmap stereo odometry — tuned for simulated corridor environment.
     # Key changes vs defaults:
@@ -192,6 +201,15 @@ def generate_launch_description():
                 LogInfo(msg='[vio] T+15 Starting rtabmap_odom + odom_to_path'),
                 rtabmap_odom,
                 odom_to_path,
+            ],
+        ),
+
+        # T+30: OpenVINS — after rtabmap_odom is stable
+        TimerAction(
+            period=30.0,
+            actions=[
+                LogInfo(msg='[vio] T+30 Starting OpenVINS (openvins.launch.py)'),
+                openvins_launch,
             ],
         ),
 
