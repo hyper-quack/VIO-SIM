@@ -27,6 +27,7 @@ setup(
     'console_scripts': [
         'stereo_sync = vio_localization.stereo_sync:main',
         'odom_to_path = vio_localization.odom_to_path:main',
+        'px4_imu_bridge = vio_localization.px4_imu_bridge:main',
     ],
 },
 )

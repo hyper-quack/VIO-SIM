@@ -65,6 +65,16 @@ def generate_launch_description():
         ],
     )
 
+    # px4_imu_bridge republishes PX4 SensorCombined (gyro+accel) and
+    # VehicleAttitude as a standard sensor_msgs/Imu on /px4/imu (FRD→FLU).
+    px4_imu_bridge = Node(
+        package='vio_localization',
+        executable='px4_imu_bridge',
+        name='px4_imu_bridge',
+        output='screen',
+        parameters=[{'use_sim_time': True}],
+    )
+
     # stereo_sync synchronises left+right images+camera_info and injects
     # the 7.5 cm baseline (Tx) into the right camera's projection matrix,
     # since Gazebo publishes each camera independently with Tx=0.
@@ -85,10 +95,11 @@ def generate_launch_description():
     )
 
     # OpenVINS MSCKF — started after rtabmap_odom is stable (T+30s).
-    vio_dir = get_package_share_directory('vio_localization')
-    openvins_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(vio_dir, 'launch', 'openvins.launch.py')))
+    # DISABLED — standalone OpenVINS node is redundant (RTAB-Map runs odometry).
+    # vio_dir = get_package_share_directory('vio_localization')
+    # openvins_launch = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         os.path.join(vio_dir, 'launch', 'openvins.launch.py')))
 
     # rtabmap stereo odometry — tuned for simulated corridor environment.
     # Key changes vs defaults:
@@ -103,38 +114,48 @@ def generate_launch_description():
         executable='stereo_odometry',
         name='rtabmap_odom',
         parameters=[{
+            # --- node infrastructure ---
             'use_sim_time':         True,
             'frame_id':             'base_link',
             'odom_frame_id':        'odom',
-            'publish_tf':           True,
-            'subscribe_imu':        False,
+            'publish_tf':           False,
+            'subscribe_imu':        True,
+            'imu_remove_gravitational_acceleration': True,
+
+            # --- odometry strategy ---
+            'Odom/Strategy':        '0',
+            'Odom/GuessMotion':     'true',
+            'Odom/ResetCountdown':  '0',
+            'Odom/ImageDecimation': '1',
+
+            # --- visual features / matching ---
+            'Vis/FeatureType':      '9',
+            'Vis/MaxFeatures':      '500',
+            'Vis/MinInliers':       '10',
+            'Vis/InlierDistance':   '0.05',
+            'Vis/PnPReprojError':   '1.0',
+            'Vis/CorNNDR':          '0.8',
+            'Vis/Iterations':       '300',
+
+            # --- depth filtering (Kp/MaxDepth, Kp/MinDepth left unset) ---
+            'Vis/MaxDepth':         '10.0',
+            'Vis/MinDepth':         '0.1',
+
+            # --- F2M local map ---
+            'OdomF2M/MaxSize':      '1000',
+            'OdomF2M/MaxNewFeatures': '0',
+            'OdomF2M/BundleAdjustment': '1',
+            'OdomF2M/ValidDepthRatio': '0.75',
+
+            # --- sync / QoS ---
+            'approx_sync':          True,
+            'imu_queue_size':       300,
+            'sync_queue_size':      50,
+            'topic_queue_size':     50,
             'qos':                  2,
             'qos_camera_info':      2,
-            'Vis/FeatureType':      '6',     # GFTT/BRIEF — fast detector+descriptor
-            'Vis/MaxFeatures':      '500',   # was 100 — more features = more robust
-            'Vis/MinInliers':       '15',    # was 5 — stricter match acceptance
-            'Vis/InlierDistance':   '0.05',  # was 0.1 — tighter epipolar constraint
-            'Vis/EstimationType':   '1',
-            'Odom/Strategy':        '1',     # Frame-to-Frame — no map overhead
-            'Odom/ResetCountdown':  '2',     # was 0 — auto-reset after 2 lost frames
-            'Odom/ImageDecimation': '1',     # sync already decimates to ~20Hz
-            'Odom/GuessMotion':     'true',  # velocity prediction → faster convergence
-            'Odom/GuessSmoothingDelay': '0.1',
-            'Odom/ImageBuffered':   'true',
-            'Odom/KeyFrameThr':     '0.5',
-            # Reject correspondences that violate motion model
-            'Vis/EpipolarGeometryVar': '0.01',  # stricter epipolar constraint
-            'Vis/PnPReprojError':   '1.0',   # was 2.0 — tighter reprojection
-            # Feature distribution — force features across whole image not just stripes
-            'GFTT/MinDistance':     '10',    # was 15 — too spread out, not enough features
-            'GFTT/QualityLevel':    '0.01',
-            # Depth filter for features — ignore features on far repetitive walls
-            'Vis/MaxDepth':         '10.0',  # was 5.0 — too restrictive, walls at 3-6m
-            'Vis/MinDepth':         '0.1',   # was 0.3
-            'OdomF2M/MaxSize':      '200',
-            'approx_sync':          True,
-            'sync_queue_size':      10,
-            'topic_queue_size':     10,
+            'qos_imu':              2,
+            'wait_imu_to_init':     True,
         }],
         remappings=[
             ('/left/image_rect',   '/oakd/sync/left/image'),
@@ -142,6 +163,7 @@ def generate_launch_description():
             ('/left/camera_info',  '/oakd/sync/left/camera_info'),
             ('/right/camera_info', '/oakd/sync/right/camera_info'),
             ('/odom_sensor_data/image', '/rtabmap/odom_image'),
+            ('/imu',               '/px4/imu'),
         ],
         output='screen',
     )
@@ -180,8 +202,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         # T+0: TFs and IMU filter — no camera dependency
-        LogInfo(msg='[vio] T+0  Starting imu_filter + TF publishers'),
+        LogInfo(msg='[vio] T+0  Starting imu_filter + px4_imu_bridge + TF publishers'),
         imu_filter,
+        px4_imu_bridge,
         tf_oakd,
         tf_imu,
 
@@ -205,13 +228,15 @@ def generate_launch_description():
         ),
 
         # T+30: OpenVINS — after rtabmap_odom is stable
-        TimerAction(
-            period=30.0,
-            actions=[
-                LogInfo(msg='[vio] T+30 Starting OpenVINS (openvins.launch.py)'),
-                openvins_launch,
-            ],
-        ),
+        # DISABLED — RTAB-Map now runs the OpenVINS backend (Odom/Strategy=11),
+        # so the standalone OpenVINS node is redundant.
+        # TimerAction(
+        #     period=30.0,
+        #     actions=[
+        #         LogInfo(msg='[vio] T+30 Starting OpenVINS (openvins.launch.py)'),
+        #         openvins_launch,
+        #     ],
+        # ),
 
         TimerAction(
             period=27.0,

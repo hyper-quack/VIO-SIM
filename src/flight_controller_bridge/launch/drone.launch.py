@@ -50,8 +50,20 @@ def generate_launch_description():
             '/right_lidar/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/mtf01/lidar@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             '/mtf01/optical_flow@px4_msgs/msg/SensorOpticalFlow[px4_msgs.msgs.OpticalFlow',
-            '/adafruit/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
         ],
+        output='screen',
+        respawn=True,
+        respawn_delay=2.0,
+    )
+
+    # ── BRIDGE 1b: IMU (isolated) ──────────────────────────────────────────
+    # Split out of gz_bridge_lidars so the 250 Hz IMU stream has its own
+    # parameter_bridge process and is not starved by lidar/optical-flow traffic.
+    gz_bridge_imu = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='gz_bridge_imu',
+        arguments=['/adafruit/imu@sensor_msgs/msg/Imu[gz.msgs.IMU'],
         output='screen',
         respawn=True,
         respawn_delay=2.0,
@@ -100,8 +112,9 @@ def generate_launch_description():
         gz_bridge_clock,
 
         # T=0
-        LogInfo(msg='[drone] T=0  gz_bridge_lidars + MicroXRCEAgent'),
+        LogInfo(msg='[drone] T=0  gz_bridge_lidars + gz_bridge_imu + MicroXRCEAgent'),
         gz_bridge_lidars,
+        gz_bridge_imu,
         microxrce,
 
         # T=5: depth alone

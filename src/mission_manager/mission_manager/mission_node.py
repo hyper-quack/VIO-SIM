@@ -12,7 +12,6 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from std_msgs.msg import Bool
 from sensor_msgs.msg import LaserScan
 from rtabmap_msgs.msg import OdomInfo
-from nav_msgs.msg import Odometry
 import math
 
 
@@ -113,10 +112,6 @@ class MissionManager(Node):
             PoseStamped, '/goal_raw',
             self.goal_raw_callback, 10)
 
-        self.create_subscription(
-            Odometry, '/openvins/odomimu',
-            self._openvins_cb, qos_default)
-
         # Mission state
         self.state = self.STATE_IDLE
         self.armed    = False
@@ -145,22 +140,16 @@ class MissionManager(Node):
         self.in_recovery = False
         self.nav_goal_received = False
         self.altitude_m = 0.0
+        self.px4_altitude_m = 0.0
+        self._last_lidar_time = None
 
-        # VIO quality gate — waits for VIO inliers > 15 before arming.
+        # VIO quality gate — waits for VIO inliers > 8 before arming.
         # _vio_info_received stays False if rtabmap is not running (GPS-only),
         # in which case the guard is bypassed automatically.
         self._vio_inliers = 0
         self._vio_info_received = False
-        VIO_INLIERS_MIN = 15
+        VIO_INLIERS_MIN = 8
         self.VIO_INLIERS_MIN = VIO_INLIERS_MIN
-
-        # OpenVINS readiness gate — waits for a stable pose estimate.
-        # _openvins_info_received stays False if OpenVINS is not running,
-        # in which case the guard is bypassed automatically.
-        self._openvins_ready = False
-        self._openvins_info_received = False
-        self._openvins_pos_prev = None
-        self._openvins_stable_count = 0
 
         self.raw_goal_x = self.GOAL_X
         self.raw_goal_y = self.GOAL_Y
@@ -200,6 +189,7 @@ class MissionManager(Node):
         self.current_x = msg.position[0]  # North
         self.current_y = msg.position[1]  # East
         self.current_z = msg.position[2]  # Down
+        self.px4_altitude_m = max(0.0, -float(self.current_z))
 
         # Publish WORLD frame for A*, path_follower, costmap
         # World X = PX4 East
@@ -233,30 +223,15 @@ class MissionManager(Node):
             self.nav_inactive_counter = 0
 
     def mtf01_callback(self, msg):
-        if msg.ranges:
-            self.altitude_m = float(min(r for r in msg.ranges if r > 0.01))
+        valid_ranges = [r for r in msg.ranges if r > 0.01]
+        if valid_ranges:
+            self.altitude_m = float(min(valid_ranges))
+            self._last_lidar_time = self.get_clock().now()
 
     def odom_info_callback(self, msg: OdomInfo):
         self._vio_inliers = msg.inliers
         if msg.inliers > 0:
             self._vio_info_received = True
-
-    def _openvins_cb(self, msg):
-        self._openvins_info_received = True
-        pos = msg.pose.pose.position
-        if self._openvins_pos_prev is not None:
-            dx = abs(pos.x - self._openvins_pos_prev[0])
-            dy = abs(pos.y - self._openvins_pos_prev[1])
-            dz = abs(pos.z - self._openvins_pos_prev[2])
-            if dx < 0.05 and dy < 0.05 and dz < 0.05:
-                self._openvins_stable_count += 1
-            else:
-                self._openvins_stable_count = 0
-            if self._openvins_stable_count > 50:
-                self._openvins_ready = True
-                self.get_logger().info('OpenVINS initialized and stable ✓',
-                    throttle_duration_sec=5.0)
-        self._openvins_pos_prev = (pos.x, pos.y, pos.z)
 
     def goal_raw_callback(self, msg):
         self.raw_goal_x = float(msg.pose.position.x)
@@ -340,6 +315,16 @@ class MissionManager(Node):
             f'Goal publié /goal_pose: ({goal.pose.position.x:.2f}, '
             f'{goal.pose.position.y:.2f}, {goal.pose.position.z:.2f})',
             throttle_duration_sec=1.0)
+
+    def _takeoff_altitude(self):
+        if self._last_lidar_time is not None:
+            age = (
+                self.get_clock().now() - self._last_lidar_time
+            ).nanoseconds * 1e-9
+            if age < 0.5:
+                return self.altitude_m, 'mtf01'
+
+        return self.px4_altitude_m, 'px4_local'
 
     # ──────────────────────────────────────────────────────────────────
     # Smooth yaw helpers
@@ -436,22 +421,18 @@ class MissionManager(Node):
 
             self.wait_counter += 1
 
-            # VIO guard: if rtabmap is running, wait until inliers >= 15.
+            # VIO guard: if rtabmap is running, wait until inliers >= 8.
             # If /odom_info has never arrived (GPS-only mode), bypass the guard.
             vio_ready = (
                 not self._vio_info_received or
                 self._vio_inliers >= self.VIO_INLIERS_MIN
             )
 
-            # OpenVINS guard: bypass if OpenVINS never published (not running).
-            openvins_ok = (not self._openvins_info_received) or self._openvins_ready
-
             if self._vio_info_received:
                 self.get_logger().info(
                     f'Attente EKF2+VIO... ekf={self.wait_counter}/100 '
                     f'vio_inliers={self._vio_inliers}/{self.VIO_INLIERS_MIN} '
-                    f'vio_ok={vio_ready} '
-                    f'openvins_ok={openvins_ok}',
+                    f'vio_ok={vio_ready}',
                     throttle_duration_sec=1.0)
             else:
                 self.get_logger().info(
@@ -459,7 +440,7 @@ class MissionManager(Node):
                     throttle_duration_sec=1.0)
 
             # 100 ticks × 0.02 s = 2 s minimum + VIO must be tracking.
-            if self.wait_counter >= 100 and vio_ready and openvins_ok:
+            if self.wait_counter >= 100 and vio_ready:
                 self.get_logger().info('EKF2 stable + VIO OK — Envoi commande mode Offboard...')
                 self.send_command(176, 1.0, 6.0)   # MAV_CMD_DO_SET_MODE, offboard
                 self.arm_counter = 0
@@ -497,15 +478,26 @@ class MissionManager(Node):
                 self.state = self.STATE_TAKEOFF
 
         elif self.state == self.STATE_TAKEOFF:
+            if not self.armed or self.nav_state != 14:
+                self.get_logger().warn(
+                    'PX4 left armed/offboard during takeoff — returning to arming',
+                    throttle_duration_sec=1.0)
+                self.arm_counter = 0
+                self.state = self.STATE_ARMING
+                self.publish_offboard_mode()
+                self.publish_setpoint(self.current_x, self.current_y, self.current_z)
+                return
+
             self.publish_offboard_mode(velocity=True)
-            if self.altitude_m < 1.8:
+            altitude, altitude_source = self._takeoff_altitude()
+            if altitude < 1.8:
                 self.publish_velocity(0.0, 0.0, -0.3)
             else:
                 self.publish_velocity(0.0, 0.0, 0.0)
             self.get_logger().info(
-                f'Takeoff alt={self.altitude_m:.2f}m cible=2.0m',
+                f'Takeoff alt={altitude:.2f}m source={altitude_source} cible=2.0m',
                 throttle_duration_sec=1.0)
-            if self.altitude_m >= 1.8:
+            if altitude >= 1.8:
                 self.get_logger().info('Takeoff complete — construction carte...')
                 self.state = self.STATE_BUILD_MAP
                 self.map_build_counter = 0
