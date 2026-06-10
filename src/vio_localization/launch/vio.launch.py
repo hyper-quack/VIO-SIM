@@ -166,6 +166,8 @@ def generate_launch_description():
             ('/imu',               '/px4/imu'),
         ],
         output='screen',
+        respawn=True,
+        respawn_delay=3.0,
     )
 
     # DISABLED — rtabmap SLAM not needed for VIO. Only rtabmap_odom required.

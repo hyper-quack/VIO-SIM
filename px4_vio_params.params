@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────
 # HOW TO APPLY (PX4 shell after "make px4_sitl gz_x500"):
 #   param set EKF2_MAG_TYPE 5
-#   param set EKF2_EV_CTRL 9
+#   param set EKF2_EV_CTRL 1
 #   param set EKF2_GPS_CTRL 0
 #   param set EKF2_HGT_REF 0
 #   param set COM_ARM_WO_GPS 1
@@ -18,18 +18,18 @@
 #                         This conflict sets yaw_bad=True → heading_good_for_
 #                         control=False → position fusion breaks → xy_valid=False.
 #                         With mag disabled, EV is the sole heading source.
-#   EKF2_EV_CTRL  = 9    External Vision bitmask = bits 0+3:
+#   EKF2_EV_CTRL  = 1    External Vision bitmask = bit 0 only:
 #                          bit0(1) = horizontal position  ← enabled
 #                          bit1(2) = vertical position    ← disabled (avoid baro/EV-Z conflict)
 #                          bit2(4) = 3D velocity          ← disabled (caused repeated EKF2 resets)
-#                          bit3(8) = yaw                  ← enabled
+#                          bit3(8) = yaw                  ← disabled (position only, no yaw fused)
 #   EKF2_GPS_CTRL = 0    Disable GPS fusion (GPS-denied environment).
 #   EKF2_HGT_REF  = 0    Barometer = primary altitude reference.
 #   COM_ARM_WO_GPS = 1   Allow arming without GPS fix.
 #   EKF2_EV_DELAY = 175  External vision latency compensation [ms].
 #
 # TUNING PATH (only after arming confirmed at each step):
-#   Step 1: EKF2_EV_CTRL=9  (h-pos + yaw)              → confirm arming ← CURRENT
+#   Step 1: EKF2_EV_CTRL=1  (h-pos only)               → confirm arming ← CURRENT
 #   Step 2: EKF2_EV_CTRL=13 (h-pos + velocity + yaw)   → confirm stable flight
 #   Step 3: EKF2_EV_CTRL=15 (all)                       → only if step 2 stable
 #
@@ -37,7 +37,7 @@
 # QGC .params file format: <component_id>\t<param_name>\t<value>\t<type>
 # type: 6=INT32, 9=FLOAT
 1	EKF2_MAG_TYPE	5	6
-1	EKF2_EV_CTRL	9	6
+1	EKF2_EV_CTRL	1	6
 1	EKF2_GPS_CTRL	0	6
 1	EKF2_HGT_REF	0	6
 1	COM_ARM_WO_GPS	1	6

@@ -32,6 +32,9 @@ class VIOBridge(Node):
         self._reset_counter = 0           # incremented on each tracking recovery
         self._odom_lost = True            # rtabmap lost flag; block publishing until tracking
         self._prev_pos = None             # previous (x, y) for jump rejection
+        self._raw_x0 = None               # RTAB origin captured on first valid frame
+        self._raw_y0 = None
+        self._raw_z0 = None
 
         odom_info_topic = self.declare_parameter('odom_info_topic', '/odom_info').value
         odom_topic      = self.declare_parameter('odom_topic',      '/odom').value
@@ -84,16 +87,36 @@ class VIOBridge(Node):
         if self._odom_quality < 15:
             return
 
-        # Position jump gate: reject frames that teleport > 1.0 m between
-        # consecutive samples (a sign of a bad VIO estimate).
         p = msg.pose.pose.position
-        x = float(p.x)
-        y = float(p.y)
+        # Capture RTAB origin on first valid frame
+        if self._raw_x0 is None:
+            self._raw_x0 = float(p.x)
+            self._raw_y0 = float(p.y)
+            self._raw_z0 = float(p.z)
+            self.get_logger().info(
+                f'RTAB origin captured: x0={self._raw_x0:.3f} y0={self._raw_y0:.3f} z0={self._raw_z0:.3f}')
+
+        # RTAB → NED (relative to captured origin):
+        #   North = RTAB y, East = RTAB z, Down = RTAB x
+        north = float(p.y) - self._raw_y0
+        east  = float(p.z) - self._raw_z0
+        down  = float(p.x) - self._raw_x0
+        x = east   # for jump gate check
+        y = north
+
+        # Position jump gate: a teleport > 2.0 m between consecutive samples
+        # signals a VIO discontinuity (e.g. loop closure). Re-anchor the origin
+        # and bump reset_counter so EKF2 re-aligns instead of treating it as motion.
         if self._prev_pos is not None:
             dx = abs(x - self._prev_pos[0])
             dy = abs(y - self._prev_pos[1])
-            if dx > 2.0 or dy > 2.0:   # was 1.0
-                self.get_logger().warn(f'VIO jump rejected: dx={dx:.2f} dy={dy:.2f}')
+            if dx > 2.0 or dy > 2.0:
+                self.get_logger().warn(f'VIO jump {dx:.2f},{dy:.2f}m — re-anchoring origin')
+                self._raw_x0 = float(p.x)
+                self._raw_y0 = float(p.y)
+                self._raw_z0 = float(p.z)
+                self._reset_counter = (self._reset_counter + 1) % 256
+                self._prev_pos = (0.0, 0.0)
                 return
         self._prev_pos = (x, y)
 
@@ -104,38 +127,24 @@ class VIOBridge(Node):
         vio.timestamp_sample = stamp.sec * 1_000_000 + stamp.nanosec // 1000
         vio.timestamp = self.get_clock().now().nanoseconds // 1000
 
-        # Position: ENU (x=East, y=North, z=Up) → NED (x=North, y=East, z=Down)
-        vio.position[0] = float(p.y)   # North
-        vio.position[1] = float(p.x)   # East
-        vio.position[2] = float(-p.z)  # Down
+        # Position: RTAB → NED (relative to captured origin)
+        vio.position[0] = north
+        vio.position[1] = east
+        vio.position[2] = down
 
-        # Orientation quaternion: ENU body (FLU) → NED body (FRD).
-        # The frame change swaps the North/East axes and flips Down:
-        #   q_ned.w =  q_enu.w
-        #   q_ned.x =  q_enu.y   (NED North ← ENU North = enu.y)
-        #   q_ned.y =  q_enu.x   (NED East  ← ENU East  = enu.x)
-        #   q_ned.z = -q_enu.z   (NED Down  ← ENU Up negated)
-        q = msg.pose.pose.orientation
-        vio.q[0] = float(q.w)
-        vio.q[1] = float(q.y)
-        vio.q[2] = float(q.x)
-        vio.q[3] = float(-q.z)
+        # Orientation: not fused with EKF2_EV_CTRL=1 (no yaw) — send NaN.
+        vio.q[0] = float('nan')
+        vio.q[1] = float('nan')
+        vio.q[2] = float('nan')
+        vio.q[3] = float('nan')
 
-        # Linear velocity: nav_msgs/Odometry twist is in child frame (body FLU).
-        # Convert FLU → FRD: forward=same, right=-left, down=-up
-        v = msg.twist.twist.linear
-        vio.velocity[0] = float(v.x)
-        vio.velocity[1] = float(-v.y)
-        vio.velocity[2] = float(-v.z)
-
-        # Angular velocity: FLU body → FRD body
-        #   roll  rate (about fwd)  : same sign
-        #   pitch rate (about right): negated (FLU left = FRD right)
-        #   yaw   rate (about down) : negated (FLU up CCW = FRD down CW)
-        w = msg.twist.twist.angular
-        vio.angular_velocity[0] = float(w.x)
-        vio.angular_velocity[1] = float(-w.y)
-        vio.angular_velocity[2] = float(-w.z)
+        # Velocity / angular velocity: not fused with EKF2_EV_CTRL=1 — send NaN.
+        vio.velocity[0] = float('nan')
+        vio.velocity[1] = float('nan')
+        vio.velocity[2] = float('nan')
+        vio.angular_velocity[0] = float('nan')
+        vio.angular_velocity[1] = float('nan')
+        vio.angular_velocity[2] = float('nan')
 
         vio.pose_frame     = VehicleOdometry.POSE_FRAME_NED
         vio.velocity_frame = VehicleOdometry.VELOCITY_FRAME_BODY_FRD
